@@ -3,6 +3,9 @@
 Live on AI-02: **http://192.168.5.230:8095**. Compose service: `dashboard`;
 container: `visibility-dashboard-1`; image: `visibility-dashboard:0.5.0`.
 
+The Overview changes described below are in the local source tree. They do not
+change the running AI-02 dashboard until the reviewed image is built and deployed.
+
 The compiled React/TypeScript frontend and FastAPI backend share one container.
 The browser loads scripts, icons, styles, and geographic geometry from AI-02.
 The backend queries `http://logs:9428` over the existing Compose network. It does
@@ -10,10 +13,12 @@ not hold firewall administration credentials or Docker socket access.
 
 ## Views
 
-- **Overview:** world map or draggable globe, Rochester city anchor, country
-  selection, activity histogram, and linked firewall event table. Click an IP
-  address to filter the table. New observations briefly highlight map points;
-  reduced-motion preferences are respected.
+- **Overview:** source freshness for OPNsense, Pi-hole, and UniFi; separate
+  firewall, DNS, and connected-client summary cards; the existing world map or
+  draggable globe with Rochester city anchor and country selection; current
+  collection signals; and a 24-hour hourly firewall/DNS timeline. Summary links
+  open Activity or Devices with the relevant filter applied. New observations
+  briefly highlight map points; reduced-motion preferences are respected.
 - **Activity:** parsed firewall records or **All logs**. All logs searches stored
   message text on the server and can filter by application. Row details retain
   the original message. All log text is rendered as text, not markup.
@@ -29,16 +34,32 @@ not hold firewall administration credentials or Docker socket access.
   category feed, saved probabilities, original evidence, and usage. Manual
   sampling remains available. Both modes share a ten-request daily limit and
   15-minute expiry. See [experiment controls](jev-trial.md).
-- **Live / Paused:** refresh every ten seconds, or freeze the current result.
-  Manual refresh remains available while paused. Time changes request a new
-  result. Light/dark preference is saved in the browser.
+- **Live / Paused:** firewall snapshots refresh every ten seconds, Overview
+  source status every fifteen seconds, and its timeline every minute. Pausing
+  freezes those browser requests; manual refresh remains available. Time
+  changes request a new firewall result. Light/dark preference is saved in the
+  browser.
 
 The firewall view loads the newest **5,000** records in the chosen range. It shows
-a notice and a separate matching-record count when capped. Its map, country
-breakdown, local filters, and histogram describe the loaded records. All logs
+a notice and a separate matching-record count when capped. The Overview map,
+country breakdown, and allowed/blocked card counts describe the loaded records;
+the card's firewall total counts all matching logged decisions. The hourly
+firewall timeline counts all logged decisions over a fixed past 24 hours, using
+one bounded aggregate query. DNS card counts come from Pi-hole's own 24-hour
+summary; DNS timeline bars use its history, while the filtered DNS page reads
+the local query archive. Archive totals can differ when collection started late
+or is lagging. UniFi client counts are from its latest inventory snapshot. These
+sources do not share a traffic denominator. All logs
 loads the newest **1,000** matching messages; both tables paginate 50 rows at a
 time. Narrow the time range or use the All logs server search for specific older
 events. Source reporting shows at most 40 source/application pairs.
+
+Card links retain filters in the URL. For example,
+`#activity/firewall?action=block`, `#activity/dns?window=24h&outcome=blocked`,
+and `#devices?focus=clients&connection=WIRELESS` open the corresponding table.
+Refreshing or using Back/Forward restores those linked filters. DNS and Devices
+scroll to the filtered table. The Overview keeps the map as a firewall view;
+it does not claim that DNS queries or inventory clients are firewall events.
 
 Time ranges extend to 30 days, subject to records actually collected and retained.
 Queries have an eight-second collector timeout, a ten-second HTTP timeout, a
@@ -104,6 +125,7 @@ For frontend changes without Docker:
 cd dashboard/frontend
 npm ci --ignore-scripts
 npm run format:check
+npm run test:routes
 npm run build
 ```
 

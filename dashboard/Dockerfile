@@ -3,7 +3,7 @@ WORKDIR /build
 COPY dashboard/frontend/package*.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY dashboard/frontend/ ./
-RUN npm run build
+RUN npm run test:routes && npm run build
 
 FROM python:3.12-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS backend-test
 WORKDIR /app

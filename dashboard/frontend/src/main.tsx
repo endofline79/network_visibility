@@ -2,8 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
-  ArrowDownLeft,
-  ArrowUpRight,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -26,10 +24,19 @@ import {
   Sparkles,
   Network,
 } from "lucide-react";
-import { WorldMap } from "./WorldMap";
+import { Overview } from "./Overview";
 import { JevTrial } from "./JevTrial";
 import { Inventory } from "./Inventory";
 import { Dns, DnsHealth } from "./Dns";
+import {
+  devicesHash,
+  dnsHash,
+  firewallHash,
+  logsHash,
+  overviewHash,
+  parseHash,
+} from "./routes";
+import type { FirewallAction, Route, View, EventMode } from "./routes";
 import type { FirewallEvent, LogResponse, LogRow, Snapshot } from "./types";
 import "./style.css";
 
@@ -72,24 +79,13 @@ async function getJSON<T>(url: string, signal: AbortSignal): Promise<T> {
   return r.json();
 }
 
+const initialRoute = parseHash(window.location.hash);
+
 function App() {
-  const [view, setView] = useState<
-    "overview" | "events" | "health" | "jev" | "inventory"
-  >(
-    ["#inventory", "#devices"].includes(window.location.hash)
-      ? "inventory"
-      : window.location.hash === "#jev"
-        ? "jev"
-        : window.location.hash.startsWith("#activity") ||
-            window.location.hash === "#dns"
-          ? "events"
-          : window.location.hash === "#collection"
-            ? "health"
-            : "overview",
-  );
+  const [view, setView] = useState<View>(initialRoute.view);
   const [inventoryHealthy, setInventoryHealthy] = useState(false);
   const [dnsHealthy, setDnsHealthy] = useState(false);
-  const [windowValue, setWindow] = useState("15m");
+  const [windowValue, setWindow] = useState(initialRoute.window);
   const [data, setData] = useState<Snapshot | null>(null);
   const [rawData, setRawData] = useState<LogResponse | null>(null);
   const [error, setError] = useState("");
@@ -99,18 +95,20 @@ function App() {
   const [refresh, setRefresh] = useState(0);
   const [now, setNow] = useState(Date.now());
   const [country, setCountry] = useState("");
-  const [action, setAction] = useState("all");
+  const [action, setAction] = useState<FirewallAction>(initialRoute.action);
   const [search, setSearch] = useState("");
   const [iface, setIface] = useState("");
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<FirewallEvent | LogRow | null>(null);
-  const [eventMode, setEventMode] = useState<"firewall" | "system" | "dns">(
-    ["#dns", "#activity/dns"].includes(window.location.hash)
-      ? "dns"
-      : window.location.hash === "#activity/logs"
-        ? "system"
-        : "firewall",
-  );
+  const [eventMode, setEventMode] = useState<EventMode>(initialRoute.eventMode);
+  const [dnsTarget, setDnsTarget] = useState({
+    window: initialRoute.dnsWindow,
+    outcome: initialRoute.dnsOutcome,
+  });
+  const [inventoryTarget, setInventoryTarget] = useState({
+    focus: initialRoute.focusClients,
+    connection: initialRoute.connection,
+  });
   const dnsView = view === "events" && eventMode === "dns";
   const [rawSearch, setRawSearch] = useState("");
   const [rawQuery, setRawQuery] = useState("");
@@ -127,6 +125,38 @@ function App() {
   const lastSnapshotRequest = useRef("");
   const lastRawRequest = useRef("");
   const lastRawScope = useRef("");
+  const applyRoute = (route: Route) => {
+    setView(route.view);
+    setEventMode(route.eventMode);
+    setWindow(route.window);
+    setAction(route.action);
+    setDnsTarget({ window: route.dnsWindow, outcome: route.dnsOutcome });
+    setInventoryTarget({
+      focus: route.focusClients,
+      connection: route.connection,
+    });
+    setCountry("");
+    setSearch("");
+    setIface("");
+    setSelected(null);
+    detail.current?.close();
+    setData(null);
+    setRawData(null);
+  };
+  const navigate = (hash: string) => {
+    if (window.location.hash !== hash) history.pushState(null, "", hash);
+    applyRoute(parseHash(hash));
+    window.scrollTo(0, 0);
+  };
+  useEffect(() => {
+    const sync = () => applyRoute(parseHash(window.location.hash));
+    window.addEventListener("popstate", sync);
+    window.addEventListener("hashchange", sync);
+    return () => {
+      window.removeEventListener("popstate", sync);
+      window.removeEventListener("hashchange", sync);
+    };
+  }, []);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try {
@@ -287,14 +317,7 @@ function App() {
   const applications = [
     ...new Set((data?.sources || []).map((s) => s.app_name)),
   ].sort();
-  const healthy =
-    !error &&
-    !!data &&
-    !!data.last_event &&
-    now - Date.parse(data.last_event) < 120000;
-  const coverage = data?.public_ips
-    ? Math.round((Object.keys(locations).length / data.public_ips) * 100)
-    : null;
+  const healthy = !error && !!data;
   const selectedName =
     countries.find((c) => c.code === country)?.name || country;
   const closeDetail = () => {
@@ -306,6 +329,8 @@ function App() {
     setAction("all");
     setSearch("");
     setIface("");
+    if (view === "events" && eventMode === "firewall")
+      history.replaceState(null, "", firewallHash(windowValue));
   };
   const pickIP = (ip: string) => {
     setSearch(ip);
@@ -327,19 +352,20 @@ function App() {
                 key={v}
                 className={view === v ? "active" : ""}
                 onClick={() => {
-                  setView(v);
-                  history.replaceState(
-                    null,
-                    "",
+                  navigate(
                     v === "events"
-                      ? `#activity/${eventMode === "system" ? "logs" : eventMode}`
+                      ? eventMode === "dns"
+                        ? dnsHash()
+                        : eventMode === "system"
+                          ? logsHash()
+                          : firewallHash()
                       : v === "inventory"
-                        ? "#devices"
+                        ? devicesHash()
                         : v === "health"
                           ? "#collection"
                           : v === "jev"
                             ? "#jev"
-                            : window.location.pathname,
+                            : overviewHash(),
                   );
                 }}
                 aria-current={view === v ? "page" : undefined}
@@ -390,7 +416,7 @@ function App() {
             <div className="eyebrow">YOUR NETWORK, IN VIEW</div>
             <h1>
               {view === "overview"
-                ? "Network activity"
+                ? "Network overview"
                 : view === "events"
                   ? "Explore network activity"
                   : view === "inventory"
@@ -408,7 +434,7 @@ function App() {
                     ? "Source freshness, location coverage, and query status."
                     : view === "events"
                       ? "Firewall decisions, DNS queries, and device events"
-                      : "OPNsense firewall logs · 30-day retention"}
+                      : "A live view of firewall decisions, DNS queries, and connected clients"}
             </p>
           </div>
           {!dnsView && view !== "jev" && view !== "inventory" && (
@@ -419,9 +445,21 @@ function App() {
                   aria-label="Time range"
                   value={windowValue}
                   onChange={(e) => {
-                    setWindow(e.target.value);
+                    const nextWindow = e.target.value;
+                    setWindow(nextWindow);
                     setData(null);
                     setSelected(null);
+                    history.replaceState(
+                      null,
+                      "",
+                      view === "overview"
+                        ? overviewHash(nextWindow)
+                        : view === "events" && eventMode === "system"
+                          ? logsHash(nextWindow)
+                          : view === "events"
+                            ? firewallHash(nextWindow, action)
+                            : "#collection",
+                    );
                   }}
                 >
                   {WINDOWS.map(([v, label]) => (
@@ -463,11 +501,12 @@ function App() {
                 key={mode}
                 aria-pressed={eventMode === mode}
                 onClick={() => {
-                  setEventMode(mode);
-                  history.replaceState(
-                    null,
-                    "",
-                    `#activity/${mode === "system" ? "logs" : mode}`,
+                  navigate(
+                    mode === "dns"
+                      ? dnsHash()
+                      : mode === "system"
+                        ? logsHash()
+                        : firewallHash(),
                   );
                 }}
               >
@@ -476,9 +515,29 @@ function App() {
             ))}
           </div>
         )}
-        {dnsView && <Dns onHealth={setDnsHealthy} />}
+        {dnsView && (
+          <Dns
+            key={`${dnsTarget.window}:${dnsTarget.outcome}`}
+            onHealth={setDnsHealthy}
+            initialWindow={dnsTarget.window}
+            initialOutcome={dnsTarget.outcome}
+            onRouteChange={(dnsWindow, outcome) =>
+              history.replaceState(null, "", dnsHash(dnsWindow, outcome))
+            }
+          />
+        )}
         {view === "jev" && <JevTrial onInspect={setSelected} />}
-        {view === "inventory" && <Inventory onHealth={setInventoryHealthy} />}
+        {view === "inventory" && (
+          <Inventory
+            key={`${inventoryTarget.focus}:${inventoryTarget.connection}`}
+            onHealth={setInventoryHealthy}
+            focusClients={inventoryTarget.focus}
+            initialConnection={inventoryTarget.connection}
+            onRouteChange={(connection, focus = true) =>
+              history.replaceState(null, "", devicesHash(focus, connection))
+            }
+          />
+        )}
         {!dnsView && view !== "jev" && view !== "inventory" && error && (
           <div className="notice error" role="alert">
             <AlertCircle size={18} />
@@ -491,7 +550,8 @@ function App() {
           view !== "jev" &&
           view !== "inventory" &&
           data &&
-          data.capped && (
+          data.capped &&
+          view !== "overview" && (
             <div className="notice">
               <Layers size={17} />
               <span>
@@ -506,7 +566,8 @@ function App() {
           view !== "jev" &&
           view !== "inventory" &&
           data &&
-          data.parse_errors > 0 && (
+          data.parse_errors > 0 &&
+          view !== "overview" && (
             <div className="notice">
               <AlertCircle size={17} />
               {data.parse_errors} records could not be parsed. Their original
@@ -517,132 +578,55 @@ function App() {
           view !== "jev" &&
           view !== "inventory" &&
           !data &&
-          !error && (
+          !error &&
+          view !== "overview" && (
             <div className="loading-state">
               <Radar className="spinning" size={32} />
               <h2>Reading your network logs…</h2>
               <p>Connecting to the collector on AI-02</p>
             </div>
           )}
+        {view === "overview" && (
+          <Overview
+            snapshot={data}
+            firewallError={error}
+            events={filtered}
+            locations={locations}
+            countries={countries}
+            country={country}
+            onCountry={setCountry}
+            windowValue={windowValue}
+            live={live}
+            refresh={refresh}
+            now={now}
+            onNavigate={navigate}
+          />
+        )}
         {!dnsView && view !== "jev" && view !== "inventory" && data && (
           <>
-            {view === "overview" && (
-              <>
-                <section className="metrics" aria-label="Loaded event summary">
-                  <Metric
-                    icon={<Layers />}
-                    label="Loaded events"
-                    value={number(events.length)}
-                    note={`${number(data.total)} in selected window`}
-                  />
-                  <Metric
-                    icon={<Shield />}
-                    label="Allowed / blocked"
-                    value={`${number(events.filter((e) => e.action === "pass").length)} / ${number(events.filter((e) => e.action === "block").length)}`}
-                    note="Logged firewall decisions"
-                  />
-                  <Metric
-                    icon={<Globe2 />}
-                    label="Countries observed"
-                    value={number(countries.length)}
-                    note={
-                      coverage === null
-                        ? "No public endpoints"
-                        : `${coverage}% of public IPs located`
-                    }
-                  />
-                  <Metric
-                    icon={<Activity />}
-                    label="Latest firewall event"
-                    value={age(data.last_event, now)}
-                    note={
-                      live
-                        ? "Refreshing every 10 seconds"
-                        : "Display updates paused"
-                    }
-                  />
-                </section>
-                <WorldMap
-                  events={filtered}
-                  locations={locations}
-                  lab={data.lab}
-                  selectedCountry={country}
-                  onCountry={setCountry}
-                  asOf={data.as_of}
-                />
-                <div className="country-strip">
-                  <button
-                    className={!country ? "selected" : ""}
-                    onClick={() => setCountry("")}
-                  >
-                    All countries <span>{countries.length}</span>
-                  </button>
-                  {countries.slice(0, 7).map((c) => (
-                    <button
-                      key={c.code}
-                      className={country === c.code ? "selected" : ""}
-                      onClick={() => setCountry(c.code)}
-                    >
-                      {c.name}
-                      <span>{number(c.count)}</span>
-                    </button>
-                  ))}
-                  {countries.length > 7 && (
-                    <label className="country-more">
-                      <select
-                        aria-label="All observed countries"
-                        value={country}
-                        onChange={(e) => setCountry(e.target.value)}
-                      >
-                        <option value="">More countries…</option>
-                        {countries.map((c) => (
-                          <option value={c.code} key={c.code}>
-                            {c.name} ({number(c.count)})
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                </div>
-                {!data.geoip.available && (
-                  <div className="notice">
-                    The local location database is unavailable. Logs are still
-                    searchable; geographic points will appear when it is
-                    restored.
-                  </div>
-                )}
-                <ActivityStrip
-                  events={filtered}
-                  from={data.oldest_event}
-                  to={data.as_of}
-                />
-              </>
-            )}
-            {view !== "health" && (
+            {view === "events" && (
               <section className="event-section">
                 <div className="section-heading">
                   <div>
                     <h2>
-                      {view === "events"
-                        ? "Collected events"
-                        : "Firewall events"}{" "}
+                      Collected events{" "}
                       <span className="muted">
                         /{" "}
                         {number(
-                          view === "events" && eventMode === "system"
+                          eventMode === "system"
                             ? rawData?.logs.length || 0
                             : filtered.length,
                         )}
                       </span>
                     </h2>
                     <p>
-                      {view === "events" && eventMode === "system"
+                      {eventMode === "system"
                         ? "All collected applications · server-side message search"
                         : `${country ? selectedName : "All countries"} · ${action === "all" ? "All actions" : action === "pass" ? "Allowed" : "Blocked"} · ${number(filtered.length)} matching loaded events`}
                     </p>
                   </div>
                 </div>
-                {!(view === "events" && eventMode === "system") ? (
+                {eventMode !== "system" ? (
                   <>
                     <div className="filters">
                       <label className="search-box">
@@ -666,7 +650,15 @@ function App() {
                       <select
                         aria-label="Firewall action"
                         value={action}
-                        onChange={(e) => setAction(e.target.value)}
+                        onChange={(e) => {
+                          const nextAction = e.target.value as FirewallAction;
+                          setAction(nextAction);
+                          history.replaceState(
+                            null,
+                            "",
+                            firewallHash(windowValue, nextAction),
+                          );
+                        }}
                       >
                         <option value="all">All actions</option>
                         <option value="pass">Allowed</option>
@@ -682,20 +674,18 @@ function App() {
                           <option key={i}>{i}</option>
                         ))}
                       </select>
-                      {view === "events" && (
-                        <select
-                          aria-label="Country"
-                          value={country}
-                          onChange={(e) => setCountry(e.target.value)}
-                        >
-                          <option value="">All countries</option>
-                          {countries.map((c) => (
-                            <option value={c.code} key={c.code}>
-                              {c.name}
-                            </option>
-                          ))}
-                        </select>
-                      )}
+                      <select
+                        aria-label="Country"
+                        value={country}
+                        onChange={(e) => setCountry(e.target.value)}
+                      >
+                        <option value="">All countries</option>
+                        {countries.map((c) => (
+                          <option value={c.code} key={c.code}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
                       {(country || action !== "all" || search || iface) && (
                         <button className="text-button" onClick={resetFilters}>
                           Clear filters
@@ -1142,28 +1132,6 @@ function App() {
   );
 }
 
-function Metric({
-  icon,
-  label,
-  value,
-  note,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  note: string;
-}) {
-  return (
-    <div className="metric">
-      <div className="metric-label">
-        {icon}
-        {label}
-      </div>
-      <div className="metric-value">{value}</div>
-      <p>{note}</p>
-    </div>
-  );
-}
 function Action({ action, error }: { action: string; error: boolean }) {
   return (
     <span
@@ -1253,72 +1221,4 @@ function Pagination({
     </div>
   );
 }
-function ActivityStrip({
-  events,
-  from,
-  to,
-}: {
-  events: FirewallEvent[];
-  from: string | null;
-  to: string;
-}) {
-  const end = Date.parse(to),
-    start = from ? Date.parse(from) : end - 900000,
-    span = Math.max(end - start, 1000),
-    bins = Array.from({ length: 60 }, () => ({ pass: 0, block: 0, other: 0 }));
-  for (const e of events) {
-    const index = Math.max(
-      0,
-      Math.min(59, Math.floor(((Date.parse(e.time) - start) / span) * 60)),
-    );
-    if (!Number.isFinite(index)) continue;
-    const k =
-      e.action === "pass" ? "pass" : e.action === "block" ? "block" : "other";
-    bins[index][k]++;
-  }
-  const max = Math.max(1, ...bins.map((b) => b.pass + b.block + b.other));
-  return (
-    <section
-      className="activity-strip"
-      aria-label="Loaded event activity over time"
-    >
-      <div className="activity-heading">
-        <span>
-          <Activity size={15} />
-          Loaded event activity
-        </span>
-        <small>
-          {from ? clock(from) : "—"} — {clock(to)} · peak {max} events / bucket
-        </small>
-      </div>
-      <div
-        className="activity-bars"
-        role="img"
-        aria-label={`${events.length} loaded firewall records, peak ${max} per time bucket`}
-      >
-        {bins.map((b, i) => (
-          <div
-            key={i}
-            className="activity-bin"
-            title={`${b.pass} allowed, ${b.block} blocked, ${b.other} other`}
-          >
-            <i
-              className="bar-other"
-              style={{ height: `${(b.other / max) * 100}%` }}
-            />
-            <i
-              className="bar-blocked"
-              style={{ height: `${(b.block / max) * 100}%` }}
-            />
-            <i
-              className="bar-allowed"
-              style={{ height: `${(b.pass / max) * 100}%` }}
-            />
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 createRoot(document.getElementById("root")!).render(<App />);

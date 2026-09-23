@@ -46,7 +46,7 @@ export function WorldMap({
 }) {
   const container = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(960);
-  const [mode, setMode] = useState<"map" | "globe">("map");
+  const [mode, setMode] = useState<"map" | "globe">("globe");
   const [rotation, setRotation] = useState<[number, number]>([30, -20]);
   const [hover, setHover] = useState<Point | null>(null);
   const drag = useRef<{

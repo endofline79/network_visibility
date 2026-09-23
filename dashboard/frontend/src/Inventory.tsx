@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Cable,
@@ -10,6 +10,7 @@ import {
   Server,
   Wifi,
 } from "lucide-react";
+import type { Connection } from "./routes";
 
 type Device = {
   id: string;
@@ -49,7 +50,7 @@ type Client = {
   uplink_id: string | null;
   connected_at: string | null;
 };
-type InventoryResponse = {
+export type InventoryResponse = {
   state:
     "fresh" | "partial" | "stale" | "starting" | "unavailable" | "disabled";
   stale: boolean;
@@ -109,15 +110,22 @@ const title = (value: string | null) =>
 
 export function Inventory({
   onHealth,
+  focusClients,
+  initialConnection,
+  onRouteChange,
 }: {
   onHealth: (healthy: boolean) => void;
+  focusClients: boolean;
+  initialConnection: Connection;
+  onRouteChange: (connection: Connection, focusClients?: boolean) => void;
 }) {
   const [data, setData] = useState<InventoryResponse | null>(null);
   const [error, setError] = useState("");
   const [now, setNow] = useState(Date.now());
   const [search, setSearch] = useState("");
   const [attachment, setAttachment] = useState("");
-  const [connection, setConnection] = useState("");
+  const [connection, setConnection] = useState(initialConnection);
+  const focusedClients = useRef(false);
   const [page, setPage] = useState(0);
   useEffect(() => {
     const abort = new AbortController();
@@ -158,6 +166,15 @@ export function Inventory({
   }, []);
   useEffect(() => setPage(0), [search, attachment, connection]);
   const snapshot = data?.snapshot;
+  useEffect(() => {
+    if (!focusClients || !snapshot || focusedClients.current) return;
+    focusedClients.current = true;
+    requestAnimationFrame(() => {
+      const heading = document.getElementById("clients-title");
+      heading?.scrollIntoView({ block: "start" });
+      heading?.focus({ preventScroll: true });
+    });
+  }, [focusClients, snapshot]);
   const devices = snapshot?.devices || [];
   const clients = snapshot?.clients || [];
   const devicesById = useMemo(
@@ -220,6 +237,7 @@ export function Inventory({
     setAttachment(attachment === id ? "" : id);
     setSearch("");
     setConnection("");
+    onRouteChange("", false);
   };
   const roots = devices.filter(
     (d) => !d.uplink_id || !devicesById.has(d.uplink_id),
@@ -366,7 +384,7 @@ export function Inventory({
             <div className="inventory-section-title">
               <div>
                 <div className="eyebrow">THE DEVICES USING YOUR NETWORK</div>
-                <h2 id="clients-title">
+                <h2 id="clients-title" tabIndex={-1}>
                   Connected clients{" "}
                   <span className="muted">
                     {filtered.length} of {clients.length}
@@ -379,6 +397,7 @@ export function Inventory({
                     setSearch("");
                     setAttachment("");
                     setConnection("");
+                    onRouteChange("");
                   }}
                 >
                   Clear filters
@@ -411,7 +430,11 @@ export function Inventory({
               <select
                 aria-label="Filter clients by connection"
                 value={connection}
-                onChange={(e) => setConnection(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setConnection(value);
+                  onRouteChange(value);
+                }}
               >
                 <option value="">All connections</option>
                 {Array.from(new Set(clients.map((c) => c.type || "UNKNOWN")))

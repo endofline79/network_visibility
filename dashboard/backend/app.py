@@ -171,6 +171,35 @@ def build_snapshot(window):
     }
 
 
+def build_overview_trend(at=None):
+    """Count all logged firewall decisions in hourly buckets over a bounded day."""
+    anchor = at or datetime.now(timezone.utc)
+    start = anchor - timedelta(hours=24)
+    base = base_filter("24h", at=anchor)
+    rows = query_logs(f"{base} | stats by (_time:1h) count() events | sort by (_time)")
+    if len(rows) > 25:
+        raise ValueError("Unexpected number of hourly buckets")
+    counts = {}
+    for row in rows:
+        bucket = datetime.fromisoformat(str(row["_time"]).replace("Z", "+00:00"))
+        if bucket.tzinfo is None:
+            raise ValueError("Hourly bucket has no timezone")
+        bucket = bucket.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        count = int(row["events"])
+        if bucket in counts or count < 0:
+            raise ValueError("Invalid hourly bucket")
+        counts[bucket] = count
+    current = start.replace(minute=0, second=0, microsecond=0)
+    buckets = []
+    while current < anchor:
+        buckets.append({"time": current.isoformat(), "count": counts.pop(current, 0)})
+        current += timedelta(hours=1)
+    if counts:
+        raise ValueError("Hourly bucket outside requested range")
+    return {"as_of": anchor.isoformat(), "start": start.isoformat(), "window": "24h",
+            "bucket_seconds": 3600, "firewall": buckets}
+
+
 def build_jev_window(start, end):
     """Independent, non-overlapping stream windows; no map enrichment or 5m cache."""
     bounds = [datetime.fromtimestamp(value, timezone.utc).isoformat().replace("+00:00", "Z")
@@ -331,6 +360,11 @@ def trial_review(run_id: str, body: TrialReview):
 @app.get("/api/snapshot")
 def snapshot(window: Window = "15m"):
     return cached(("snapshot", window), lambda: build_snapshot(window))
+
+
+@app.get("/api/overview/trend")
+def overview_trend():
+    return cached(("overview-trend",), build_overview_trend)
 
 
 @app.get("/api/logs")

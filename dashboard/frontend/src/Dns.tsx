@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   ChevronLeft,
@@ -12,6 +12,7 @@ import {
   Shield,
   Users,
 } from "lucide-react";
+import type { DnsOutcome } from "./routes";
 
 type Summary = {
   observed_at: string;
@@ -39,7 +40,7 @@ type Summary = {
   };
   top_clients: { ip: string; name: string; count: number }[];
 };
-type Status = {
+export type DnsStatus = {
   state: string;
   stale: boolean;
   age_seconds: number | null;
@@ -88,7 +89,7 @@ async function get<T>(url: string, signal: AbortSignal): Promise<T> {
   return response.json();
 }
 function useDnsStatus(live = true, refresh = 0) {
-  const [data, setData] = useState<Status | null>(null);
+  const [data, setData] = useState<DnsStatus | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
     const abort = new AbortController();
@@ -96,7 +97,7 @@ function useDnsStatus(live = true, refresh = 0) {
     let active = true;
     const update = async () => {
       try {
-        const result = await get<Status>("/api/dns", abort.signal);
+        const result = await get<DnsStatus>("/api/dns", abort.signal);
         if (active) {
           setData(result);
           setError("");
@@ -155,14 +156,25 @@ export function DnsHealth() {
   );
 }
 
-export function Dns({ onHealth }: { onHealth: (healthy: boolean) => void }) {
+export function Dns({
+  onHealth,
+  initialWindow,
+  initialOutcome,
+  onRouteChange,
+}: {
+  onHealth: (healthy: boolean) => void;
+  initialWindow: string;
+  initialOutcome: DnsOutcome;
+  onRouteChange: (window: string, outcome: DnsOutcome) => void;
+}) {
   const [live, setLive] = useState(true);
   const [refresh, setRefresh] = useState(0);
   const { data, error } = useDnsStatus(live, refresh);
-  const [windowValue, setWindow] = useState("15m");
+  const [windowValue, setWindow] = useState(initialWindow);
   const [search, setSearch] = useState("");
   const [term, setTerm] = useState("");
-  const [outcome, setOutcome] = useState("");
+  const [outcome, setOutcome] = useState<DnsOutcome>(initialOutcome);
+  const focusedArchive = useRef(false);
   const [records, setRecords] = useState<Queries | null>(null);
   const [queryError, setQueryError] = useState("");
   const [page, setPage] = useState(0);
@@ -216,6 +228,15 @@ export function Dns({ onHealth }: { onHealth: (healthy: boolean) => void }) {
   const snapshot = data?.snapshot;
   const pages = Math.max(1, Math.ceil((records?.queries.length || 0) / 50));
   const currentPage = Math.min(page, pages - 1);
+  useEffect(() => {
+    if (!initialOutcome || !records || focusedArchive.current) return;
+    focusedArchive.current = true;
+    requestAnimationFrame(() => {
+      const heading = document.getElementById("dns-archive-title");
+      heading?.scrollIntoView({ block: "start" });
+      heading?.focus({ preventScroll: true });
+    });
+  }, [initialOutcome, records]);
   const chart = useMemo(() => {
     const rows = snapshot?.history || [];
     const max = Math.max(1, ...rows.map((r) => r.total || 0));
@@ -427,6 +448,7 @@ export function Dns({ onHealth }: { onHealth: (healthy: boolean) => void }) {
                 filter(v);
                 setOutcome("blocked");
                 setWindow("24h");
+                onRouteChange("24h", "blocked");
               }}
             />
             <Ranking
@@ -441,6 +463,7 @@ export function Dns({ onHealth }: { onHealth: (healthy: boolean) => void }) {
                 filter(v);
                 setOutcome("");
                 setWindow("24h");
+                onRouteChange("24h", "");
               }}
             />
           </div>
@@ -449,7 +472,7 @@ export function Dns({ onHealth }: { onHealth: (healthy: boolean) => void }) {
       <section className="events-panel dns-queries">
         <div className="section-heading">
           <div>
-            <h2>
+            <h2 id="dns-archive-title" tabIndex={-1}>
               DNS query archive{" "}
               <span className="count-badge">
                 {count(records?.queries.length)}
@@ -465,7 +488,10 @@ export function Dns({ onHealth }: { onHealth: (healthy: boolean) => void }) {
             <select
               aria-label="DNS query time range"
               value={windowValue}
-              onChange={(e) => setWindow(e.target.value)}
+              onChange={(e) => {
+                setWindow(e.target.value);
+                onRouteChange(e.target.value, outcome);
+              }}
             >
               {[
                 ["15m", "15 minutes"],
@@ -493,7 +519,8 @@ export function Dns({ onHealth }: { onHealth: (healthy: boolean) => void }) {
             ? `${data.archive.lag_seconds}s behind the source clock. `
             : ""}
           Normally about one to two minutes behind. The cards above cover
-          Pi-hole’s own recent history.
+          Pi-hole’s own recent history. Archive results can differ if collection
+          started less than 24 hours ago.
         </p>
         <form
           className="filters"
@@ -516,7 +543,11 @@ export function Dns({ onHealth }: { onHealth: (healthy: boolean) => void }) {
           <select
             aria-label="DNS result"
             value={outcome}
-            onChange={(e) => setOutcome(e.target.value)}
+            onChange={(e) => {
+              const nextOutcome = e.target.value as DnsOutcome;
+              setOutcome(nextOutcome);
+              onRouteChange(windowValue, nextOutcome);
+            }}
           >
             <option value="">All results</option>
             <option value="blocked">Blocked</option>
@@ -531,6 +562,7 @@ export function Dns({ onHealth }: { onHealth: (healthy: boolean) => void }) {
               onClick={() => {
                 filter("");
                 setOutcome("");
+                onRouteChange(windowValue, "");
               }}
             >
               Clear filters

@@ -8,6 +8,10 @@ logs, UniFi devices, Pi-hole DNS activity, and collection health. The lab marker
 city location. See [dashboard operations](docs/dashboard.md) and the
 [design notes](docs/dashboard-design.md). Alerting and NetFlow remain later phases.
 
+The local source tree now includes a broader Overview with source status,
+click-through summary cards, and a 24-hour firewall/DNS timeline. This version
+has not been deployed to AI-02; the live dashboard remains at its prior version.
+
 The **[Jev experiment](docs/jev-trial.md)** adds continuous activity classification:
 switch on to automatically judge up to three fresh groups each minute and watch
 the live result feed. It starts off, stops after 15 minutes or ten attempts per

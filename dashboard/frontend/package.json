@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
+    "test:routes": "node src/routes.test.mjs",
     "format": "prettier --write src vite.config.ts index.html package.json tsconfig.json",
     "format:check": "prettier --check src vite.config.ts index.html package.json tsconfig.json"
   },

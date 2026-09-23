@@ -1,5 +1,6 @@
 import json
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -62,6 +63,32 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/snapshot", params={"window": "1h | delete"}).status_code, 422)
         self.assertEqual(self.client.get("/api/logs", params={"search": "x" * 161}).status_code, 422)
         query.assert_not_called()
+
+    @patch.object(module, "query_logs")
+    def test_overview_trend_uses_bounded_hourly_counts(self, query):
+        anchor = datetime(2026, 9, 22, 12, 30, tzinfo=timezone.utc)
+        query.return_value = [
+            {"_time": "2026-09-21T12:00:00Z", "events": "2"},
+            {"_time": "2026-09-22T12:00:00Z", "events": "4"},
+        ]
+        result = module.build_overview_trend(anchor)
+        self.assertEqual(result["window"], "24h")
+        self.assertEqual(len(result["firewall"]), 25)
+        self.assertEqual(sum(row["count"] for row in result["firewall"]), 6)
+        self.assertEqual(result["firewall"][1]["count"], 0)
+        statement = query.call_args.args[0]
+        self.assertIn("_time:[2026-09-21T12:30:00Z,2026-09-22T12:30:00Z)", statement)
+        self.assertIn('remote_ip:="192.168.5.1"', statement)
+        self.assertIn("stats by (_time:1h) count() events", statement)
+
+    @patch.object(module, "query_logs", return_value=[])
+    def test_overview_trend_endpoint_is_read_only_and_cached(self, query):
+        first = self.client.get("/api/overview/trend")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json()["bucket_seconds"], 3600)
+        self.assertEqual(self.client.get("/api/overview/trend").json(), first.json())
+        self.assertEqual(self.client.post("/api/overview/trend").status_code, 405)
+        self.assertEqual(query.call_count, 1)
 
     @patch.object(module, "refresh_geo")
     @patch.object(module, "query_logs")
