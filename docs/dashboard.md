@@ -3,8 +3,9 @@
 Live on AI-02: **http://192.168.5.230:8095**. Compose service: `dashboard`;
 container: `visibility-dashboard-1`; image: `visibility-dashboard:0.5.0`.
 
-The Overview changes described below are in the local source tree. They do not
-change the running AI-02 dashboard until the reviewed image is built and deployed.
+The Overview update from local commit `a64e1e1` was deployed to AI-02 on
+2026-09-23. The previous image is retained as
+`visibility-dashboard:pre-a64e1e1-20260923` for rollback.
 
 The compiled React/TypeScript frontend and FastAPI backend share one container.
 The browser loads scripts, icons, styles, and geographic geometry from AI-02.
@@ -153,6 +154,20 @@ the active link. Collection displays database age and recommends an update after
 45 days. DB-IP attribution is included in the app footer.
 
 ## Rollback
+
+To restore the dashboard image from before the 2026-09-23 Overview release on
+AI-02, run from the project directory after reviewing the current service:
+
+```bash
+docker image tag visibility-dashboard:pre-a64e1e1-20260923 visibility-dashboard:0.5.0
+docker compose up -d --no-deps --no-build --force-recreate --wait --wait-timeout 60 dashboard
+curl --fail http://192.168.5.230:8095/api/health
+```
+
+This replaces only the dashboard container. The prior source files are archived
+at `state/dashboard-source-before-a64e1e1-20260923T171449Z.tar` on AI-02.
+Review that archive before restoring source or rebuilding; AI-02 has no Git
+repository. The operator checkout has local baseline commit `644d847`.
 
 Stop only the dashboard; collected logs and their intake remain intact:
 

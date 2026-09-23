@@ -423,3 +423,33 @@ Release receipts are `state/pihole-release.json` on the workstation and
 `state/pihole-deployed.json`, `state/pihole-acceptance.json` on AI-02. See
 [Pi-hole operations](docs/pihole-integration.md) for data limits and rollback,
 and [organization notes](docs/organization.md) for the next design decisions.
+
+## Cross-source Overview — deployed 2026-09-23 17:17 UTC
+
+- Local implementation commit `a64e1e1` was clean before deployment. AI-02 has
+  no Git repository, so only the 14 changed dashboard, test, and documentation
+  files were transferred by checksum-verified rsync. The remote README was
+  preserved because it differs from the operator checkout's Git instructions.
+  Compose, `.dockerignore`, Python requirements, and npm lockfile matched the
+  reviewed local files; `.env`, `state/`, and collector data were untouched.
+- The previous dashboard image
+  `sha256:45f3c3842df40f937a548a401ce8f68ad8712f05b1bd0e5c139bdffcac6000a6`
+  was tagged `visibility-dashboard:pre-a64e1e1-20260923`. Eleven replaced
+  source files were archived at
+  `state/dashboard-source-before-a64e1e1-20260923T171449Z.tar` on AI-02.
+- The image build passed **62 backend tests**, **2 route tests**, TypeScript
+  checking, and the production frontend build. The new image ID is
+  `sha256:46cf7e6c6898a919b73e819c96718c748fda3e9956e3ef57ed60830fe4da5b05`.
+  Compose recreated only `visibility-dashboard-1` and reported it healthy;
+  `visibility-logs-1` remained running. Jev was off and idle before cutover.
+- After cutover, `/api/health` returned 200 and the live page served
+  `assets/index-DJUhbqEi.js`, matching the local build. The new
+  `/api/overview/trend` returned 25 hourly buckets for the past 24 hours.
+  At this rolling check, the 15-minute firewall snapshot had 3,264 events,
+  no cap, zero parse failures, and available GeoIP. DNS was fresh with 78 seconds
+  of archive lag and no archive error; UniFi was fresh with 16 connected clients.
+  Dashboard startup logs showed no errors. UI layout was not browser-inspected
+  in this deployment check; route filters passed the frontend tests.
+- Rollback is the saved image tag plus a dashboard-only Compose recreate. See
+  [dashboard operations](docs/dashboard.md#rollback); source restoration requires
+  review of the saved archive before rebuilding.

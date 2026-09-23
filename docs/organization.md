@@ -16,9 +16,9 @@ the existing inventory view with clearer navigation. `#inventory` and `#jev`
 bookmarks remain valid; new links include `#activity/dns`, `#activity/firewall`,
 `#activity/logs`, `#devices`, and `#collection`.
 
-The local source update adds filtered links such as
+The 2026-09-23 deployed Overview adds filtered links such as
 `#activity/dns?window=24h&outcome=blocked` and
-`#devices?focus=clients&connection=WIRELESS`. It has not been deployed to AI-02.
+`#devices?focus=clients&connection=WIRELESS`.
 Overview keeps source times and denominators visible: firewall totals are logged
 decisions, DNS totals are Pi-hole queries, and clients are a current UniFi
 inventory. The map uses loaded firewall records; the hourly firewall chart uses
@@ -39,5 +39,5 @@ UniFi CEF events and durable event history.
    never enables paid inference automatically.
 
 The first organization pass changed navigation and added the DNS view. The
-local source now also contains the Overview summary. Cross-source device
+deployed dashboard now also contains the Overview summary. Cross-source device
 history and a unified event schema remain future work.
