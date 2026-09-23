@@ -17,8 +17,10 @@ not hold firewall administration credentials or Docker socket access.
 - **Overview:** source freshness for OPNsense, Pi-hole, and UniFi; separate
   firewall, DNS, and connected-client summary cards; the existing world map or
   draggable globe with Rochester city anchor and country selection; current
-  collection signals; and a 24-hour hourly firewall/DNS timeline. Summary links
-  open Activity or Devices with the relevant filter applied. New observations
+  collection signals; and a 24-hour hourly firewall/DNS timeline. Selecting a
+  summary card or its allowed/blocked/wired/wireless count updates **Current
+  signals** on the Overview. Its detail controls open Activity or Devices with
+  the selected filter applied. New observations
   briefly highlight map points; reduced-motion preferences are respected.
 - **Activity:** parsed firewall records or **All logs**. All logs searches stored
   message text on the server and can filter by application. Row details retain
@@ -55,7 +57,10 @@ loads the newest **1,000** matching messages; both tables paginate 50 rows at a
 time. Narrow the time range or use the All logs server search for specific older
 events. Source reporting shows at most 40 source/application pairs.
 
-Card links retain filters in the URL. For example,
+The Overview's Current signals panel shows live source summaries even when no
+collection problems are reported. Select a card or count to inspect its source
+and filter in that panel, then use **View records/queries/clients** to open the
+matching page. The detail links retain filters in the URL. For example,
 `#activity/firewall?action=block`, `#activity/dns?window=24h&outcome=blocked`,
 and `#devices?focus=clients&connection=WIRELESS` open the corresponding table.
 Refreshing or using Back/Forward restores those linked filters. DNS and Devices

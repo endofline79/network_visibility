@@ -16,7 +16,8 @@ the existing inventory view with clearer navigation. `#inventory` and `#jev`
 bookmarks remain valid; new links include `#activity/dns`, `#activity/firewall`,
 `#activity/logs`, `#devices`, and `#collection`.
 
-The 2026-09-23 deployed Overview adds filtered links such as
+The Overview summary cards first select a source or filter in Current signals;
+the panel then offers filtered links such as
 `#activity/dns?window=24h&outcome=blocked` and
 `#devices?focus=clients&connection=WIRELESS`.
 Overview keeps source times and denominators visible: firewall totals are logged

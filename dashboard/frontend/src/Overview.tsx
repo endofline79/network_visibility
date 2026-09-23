@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, Database, Network, Shield } from "lucide-react";
 import { WorldMap } from "./WorldMap";
 import type { DnsStatus } from "./Dns";
@@ -15,6 +15,11 @@ type Trend = {
 };
 type Country = { code: string; name: string; count: number };
 type Bin = { time: number; count: number };
+type SignalSelection =
+  | { source: "all" }
+  | { source: "firewall"; filter: "all" | "pass" | "block" }
+  | { source: "dns"; filter: "all" | "blocked" }
+  | { source: "devices"; filter: "all" | "WIRELESS" | "WIRED" };
 
 const number = (value: number) => value.toLocaleString();
 const age = (value: string | null | undefined, now: number) => {
@@ -147,6 +152,19 @@ export function Overview({
   const [inventoryError, setInventoryError] = useState(false);
   const [trend, setTrend] = useState<Trend | null>(null);
   const [trendError, setTrendError] = useState(false);
+  const [signal, setSignal] = useState<SignalSelection>({ source: "all" });
+  const signalHeading = useRef<HTMLHeadingElement>(null);
+
+  function selectSignal(next: SignalSelection) {
+    setSignal(next);
+    requestAnimationFrame(() => {
+      signalHeading.current?.focus({ preventScroll: true });
+      signalHeading.current?.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth",
+      });
+    });
+  }
 
   useEffect(() => {
     const abort = new AbortController();
@@ -226,6 +244,7 @@ export function Overview({
   ).length;
   const wired = clients.filter((client) => client.type === "WIRED").length;
   const offline = devices.filter((device) => device.state === "OFFLINE").length;
+  const online = devices.filter((device) => device.state === "ONLINE").length;
   const dnsProblem =
     dnsError ||
     !dns ||
@@ -321,10 +340,15 @@ export function Overview({
       </section>
 
       <section className="overview-summary" aria-label="Network summary">
-        <div className="overview-summary-card">
+        <div
+          className={`overview-summary-card ${signal.source === "firewall" ? "selected" : ""}`}
+        >
           <button
             className="overview-summary-main"
-            onClick={() => onNavigate(firewallHash(windowValue))}
+            onClick={() => selectSignal({ source: "firewall", filter: "all" })}
+            aria-pressed={
+              signal.source === "firewall" && signal.filter === "all"
+            }
           >
             <span>
               <Shield size={15} /> Firewall decisions <ChevronRight size={15} />
@@ -339,12 +363,22 @@ export function Overview({
           </button>
           <div className="overview-summary-links">
             <button
-              onClick={() => onNavigate(firewallHash(windowValue, "pass"))}
+              onClick={() =>
+                selectSignal({ source: "firewall", filter: "pass" })
+              }
+              aria-pressed={
+                signal.source === "firewall" && signal.filter === "pass"
+              }
             >
               {allowed == null ? "View allowed" : `${number(allowed)} allowed`}
             </button>
             <button
-              onClick={() => onNavigate(firewallHash(windowValue, "block"))}
+              onClick={() =>
+                selectSignal({ source: "firewall", filter: "block" })
+              }
+              aria-pressed={
+                signal.source === "firewall" && signal.filter === "block"
+              }
             >
               {blocked == null ? "View blocked" : `${number(blocked)} blocked`}
             </button>
@@ -356,10 +390,13 @@ export function Overview({
             </small>
           )}
         </div>
-        <div className="overview-summary-card">
+        <div
+          className={`overview-summary-card ${signal.source === "dns" ? "selected" : ""}`}
+        >
           <button
             className="overview-summary-main"
-            onClick={() => onNavigate(dnsHash("24h"))}
+            onClick={() => selectSignal({ source: "dns", filter: "all" })}
+            aria-pressed={signal.source === "dns" && signal.filter === "all"}
           >
             <span>
               <Database size={15} /> DNS queries <ChevronRight size={15} />
@@ -373,7 +410,12 @@ export function Overview({
             </small>
           </button>
           <div className="overview-summary-links">
-            <button onClick={() => onNavigate(dnsHash("24h", "blocked"))}>
+            <button
+              onClick={() => selectSignal({ source: "dns", filter: "blocked" })}
+              aria-pressed={
+                signal.source === "dns" && signal.filter === "blocked"
+              }
+            >
               {dnsBlocked == null
                 ? "View blocked"
                 : `${number(dnsBlocked)} blocked`}
@@ -381,10 +423,15 @@ export function Overview({
             </button>
           </div>
         </div>
-        <div className="overview-summary-card">
+        <div
+          className={`overview-summary-card ${signal.source === "devices" ? "selected" : ""}`}
+        >
           <button
             className="overview-summary-main"
-            onClick={() => onNavigate(devicesHash(true))}
+            onClick={() => selectSignal({ source: "devices", filter: "all" })}
+            aria-pressed={
+              signal.source === "devices" && signal.filter === "all"
+            }
           >
             <span>
               <Network size={15} /> Connected clients <ChevronRight size={15} />
@@ -396,16 +443,29 @@ export function Overview({
               {inventoryError || inventory?.stale
                 ? "Last available UniFi inventory"
                 : "Current UniFi inventory"}{" "}
-              · {devices.filter((device) => device.state === "ONLINE").length}{" "}
-              devices online
+              · {online} devices online
             </small>
           </button>
           <div className="overview-summary-links">
-            <button onClick={() => onNavigate(devicesHash(true, "WIRELESS"))}>
-              {number(wireless)} wireless
+            <button
+              onClick={() =>
+                selectSignal({ source: "devices", filter: "WIRELESS" })
+              }
+              aria-pressed={
+                signal.source === "devices" && signal.filter === "WIRELESS"
+              }
+            >
+              {inventory?.snapshot ? number(wireless) : "—"} wireless
             </button>
-            <button onClick={() => onNavigate(devicesHash(true, "WIRED"))}>
-              {number(wired)} wired
+            <button
+              onClick={() =>
+                selectSignal({ source: "devices", filter: "WIRED" })
+              }
+              aria-pressed={
+                signal.source === "devices" && signal.filter === "WIRED"
+              }
+            >
+              {inventory?.snapshot ? number(wired) : "—"} wired
             </button>
           </div>
         </div>
@@ -430,40 +490,349 @@ export function Overview({
         )}
         <aside className="overview-signals" aria-label="Current source signals">
           <div className="overview-signals-heading">
-            <h2>Current signals</h2>
-            <p>Facts from the latest available snapshots</p>
+            <div>
+              <h2 ref={signalHeading} tabIndex={-1}>
+                Current signals
+              </h2>
+              <p>
+                {signal.source === "all"
+                  ? "Select a source to inspect its latest snapshot"
+                  : "Snapshot detail · choose a filter, then open its records"}
+              </p>
+            </div>
+            {signal.source !== "all" && (
+              <button
+                className="overview-signal-back"
+                onClick={() => selectSignal({ source: "all" })}
+              >
+                ← All signals
+              </button>
+            )}
           </div>
-          {problems.length ? (
-            <ul className="overview-problems">
-              {problems.map((problem) => (
-                <li key={problem}>{problem}</li>
-              ))}
-            </ul>
-          ) : (
-            <p className="overview-no-problems">
-              {snapshot && dns && inventory
-                ? "No collection problems reported by the current snapshots."
-                : "Checking the latest source status."}
-            </p>
+          {signal.source === "all" && (
+            <>
+              <div className="overview-signal-list">
+                <button
+                  onClick={() =>
+                    selectSignal({ source: "firewall", filter: "all" })
+                  }
+                >
+                  <span>
+                    <Shield size={16} /> Firewall decisions
+                  </span>
+                  <strong>
+                    {snapshot ? number(snapshot.total) : "—"}{" "}
+                    <ChevronRight size={14} />
+                  </strong>
+                  <small>
+                    Last {windowLabel[windowValue]} · latest{" "}
+                    {age(snapshot?.last_event, now)}
+                  </small>
+                </button>
+                <button
+                  onClick={() => selectSignal({ source: "dns", filter: "all" })}
+                >
+                  <span>
+                    <Database size={16} /> DNS queries
+                  </span>
+                  <strong>
+                    {dnsTotal == null ? "—" : number(dnsTotal)}{" "}
+                    <ChevronRight size={14} />
+                  </strong>
+                  <small>
+                    Past 24 hours · summary{" "}
+                    {age(dns?.snapshot?.observed_at, now)}
+                  </small>
+                </button>
+                <button
+                  onClick={() =>
+                    selectSignal({ source: "devices", filter: "all" })
+                  }
+                >
+                  <span>
+                    <Network size={16} /> Connected clients
+                  </span>
+                  <strong>
+                    {inventory?.snapshot ? number(clients.length) : "—"}{" "}
+                    <ChevronRight size={14} />
+                  </strong>
+                  <small>
+                    Inventory {age(inventory?.snapshot?.observed_at, now)}
+                  </small>
+                </button>
+              </div>
+              {problems.length > 0 && (
+                <div className="overview-signal-alerts">
+                  <strong>Needs attention</strong>
+                  <ul className="overview-problems">
+                    {problems.map((problem) => (
+                      <li key={problem}>{problem}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <button
+                className="text-button"
+                onClick={() => onNavigate("#collection")}
+              >
+                Inspect collection <ChevronRight size={14} />
+              </button>
+            </>
           )}
-          <dl className="overview-signal-facts">
-            <dt>Latest firewall decision</dt>
-            <dd>{age(snapshot?.last_event, now)}</dd>
-            <dt>DNS archive</dt>
-            <dd>
-              {dns?.archive.lag_seconds != null
-                ? `${Math.round(dns.archive.lag_seconds / 60)}m behind`
-                : "Unknown"}
-            </dd>
-            <dt>UniFi inventory</dt>
-            <dd>{age(inventory?.snapshot?.observed_at, now)}</dd>
-          </dl>
-          <button
-            className="text-button"
-            onClick={() => onNavigate("#collection")}
-          >
-            Inspect collection <ChevronRight size={14} />
-          </button>
+          {signal.source === "firewall" && (
+            <>
+              <h3 className="overview-signal-title">
+                {signal.filter === "pass"
+                  ? "Allowed decisions"
+                  : signal.filter === "block"
+                    ? "Blocked decisions"
+                    : "Firewall decisions"}
+              </h3>
+              <strong className="overview-signal-stat">
+                {signal.filter === "pass"
+                  ? allowed == null
+                    ? "—"
+                    : number(allowed)
+                  : signal.filter === "block"
+                    ? blocked == null
+                      ? "—"
+                      : number(blocked)
+                    : snapshot
+                      ? number(snapshot.total)
+                      : "—"}
+              </strong>
+              <p className="overview-signal-copy">
+                Logged decisions in the last {windowLabel[windowValue]}.{" "}
+                {signal.filter !== "all" && snapshot?.capped
+                  ? "Filtered count uses the newest loaded records."
+                  : ""}
+                {firewallError ? " Showing the last available result." : ""}
+              </p>
+              <div
+                className="overview-signal-filters"
+                role="group"
+                aria-label="Firewall decision filter"
+              >
+                <button
+                  aria-pressed={signal.filter === "all"}
+                  onClick={() =>
+                    selectSignal({ source: "firewall", filter: "all" })
+                  }
+                >
+                  All
+                </button>
+                <button
+                  aria-pressed={signal.filter === "pass"}
+                  onClick={() =>
+                    selectSignal({ source: "firewall", filter: "pass" })
+                  }
+                >
+                  Allowed
+                </button>
+                <button
+                  aria-pressed={signal.filter === "block"}
+                  onClick={() =>
+                    selectSignal({ source: "firewall", filter: "block" })
+                  }
+                >
+                  Blocked
+                </button>
+              </div>
+              <dl className="overview-signal-facts">
+                <dt>All logged decisions</dt>
+                <dd>{snapshot ? number(snapshot.total) : "—"}</dd>
+                <dt>Allowed in loaded records</dt>
+                <dd>{allowed == null ? "—" : number(allowed)}</dd>
+                <dt>Blocked in loaded records</dt>
+                <dd>{blocked == null ? "—" : number(blocked)}</dd>
+                <dt>Latest decision</dt>
+                <dd>{age(snapshot?.last_event, now)}</dd>
+              </dl>
+              <button
+                className="text-button overview-signal-drill"
+                onClick={() =>
+                  onNavigate(firewallHash(windowValue, signal.filter))
+                }
+              >
+                View{" "}
+                {signal.filter === "all"
+                  ? "firewall records"
+                  : signal.filter === "pass"
+                    ? "allowed records"
+                    : "blocked records"}{" "}
+                <ChevronRight size={14} />
+              </button>
+            </>
+          )}
+          {signal.source === "dns" && (
+            <>
+              <h3 className="overview-signal-title">
+                {signal.filter === "blocked"
+                  ? "Blocked DNS queries"
+                  : "DNS queries"}
+              </h3>
+              <strong className="overview-signal-stat">
+                {signal.filter === "blocked"
+                  ? dnsBlocked == null
+                    ? "—"
+                    : number(dnsBlocked)
+                  : dnsTotal == null
+                    ? "—"
+                    : number(dnsTotal)}
+              </strong>
+              <p className="overview-signal-copy">
+                Pi-hole summary for the past 24 hours. Query records come from
+                the local archive.{" "}
+                {dnsError || dns?.stale
+                  ? "Showing the last available summary."
+                  : ""}
+              </p>
+              <div
+                className="overview-signal-filters"
+                role="group"
+                aria-label="DNS query filter"
+              >
+                <button
+                  aria-pressed={signal.filter === "all"}
+                  onClick={() => selectSignal({ source: "dns", filter: "all" })}
+                >
+                  All
+                </button>
+                <button
+                  aria-pressed={signal.filter === "blocked"}
+                  onClick={() =>
+                    selectSignal({ source: "dns", filter: "blocked" })
+                  }
+                >
+                  Blocked
+                </button>
+              </div>
+              <dl className="overview-signal-facts">
+                <dt>All queries</dt>
+                <dd>{dnsTotal == null ? "—" : number(dnsTotal)}</dd>
+                <dt>Blocked</dt>
+                <dd>
+                  {dnsBlocked == null ? "—" : number(dnsBlocked)}
+                  {dnsPercent != null ? ` (${dnsPercent.toFixed(1)}%)` : ""}
+                </dd>
+                <dt>Summary age</dt>
+                <dd>{age(dns?.snapshot?.observed_at, now)}</dd>
+                <dt>Archive lag</dt>
+                <dd>
+                  {dns?.archive.lag_seconds == null
+                    ? "Unknown"
+                    : `${Math.round(dns.archive.lag_seconds / 60)}m`}
+                </dd>
+              </dl>
+              <button
+                className="text-button overview-signal-drill"
+                onClick={() =>
+                  onNavigate(
+                    dnsHash(
+                      "24h",
+                      signal.filter === "blocked" ? "blocked" : "",
+                    ),
+                  )
+                }
+              >
+                View{" "}
+                {signal.filter === "blocked"
+                  ? "blocked queries"
+                  : "DNS queries"}{" "}
+                <ChevronRight size={14} />
+              </button>
+            </>
+          )}
+          {signal.source === "devices" && (
+            <>
+              <h3 className="overview-signal-title">
+                {signal.filter === "WIRELESS"
+                  ? "Wireless clients"
+                  : signal.filter === "WIRED"
+                    ? "Wired clients"
+                    : "Connected clients"}
+              </h3>
+              <strong className="overview-signal-stat">
+                {inventory?.snapshot
+                  ? number(
+                      signal.filter === "WIRELESS"
+                        ? wireless
+                        : signal.filter === "WIRED"
+                          ? wired
+                          : clients.length,
+                    )
+                  : "—"}
+              </strong>
+              <p className="overview-signal-copy">
+                {inventoryError || inventory?.stale
+                  ? "Last available UniFi inventory snapshot."
+                  : "Current UniFi inventory snapshot."}
+              </p>
+              <div
+                className="overview-signal-filters"
+                role="group"
+                aria-label="Client connection filter"
+              >
+                <button
+                  aria-pressed={signal.filter === "all"}
+                  onClick={() =>
+                    selectSignal({ source: "devices", filter: "all" })
+                  }
+                >
+                  All
+                </button>
+                <button
+                  aria-pressed={signal.filter === "WIRELESS"}
+                  onClick={() =>
+                    selectSignal({ source: "devices", filter: "WIRELESS" })
+                  }
+                >
+                  Wireless
+                </button>
+                <button
+                  aria-pressed={signal.filter === "WIRED"}
+                  onClick={() =>
+                    selectSignal({ source: "devices", filter: "WIRED" })
+                  }
+                >
+                  Wired
+                </button>
+              </div>
+              <dl className="overview-signal-facts">
+                <dt>All connected clients</dt>
+                <dd>{inventory?.snapshot ? number(clients.length) : "—"}</dd>
+                <dt>Wireless</dt>
+                <dd>{inventory?.snapshot ? number(wireless) : "—"}</dd>
+                <dt>Wired</dt>
+                <dd>{inventory?.snapshot ? number(wired) : "—"}</dd>
+                <dt>Network devices online</dt>
+                <dd>
+                  {inventory?.snapshot ? `${online} of ${devices.length}` : "—"}
+                </dd>
+                <dt>Inventory age</dt>
+                <dd>{age(inventory?.snapshot?.observed_at, now)}</dd>
+              </dl>
+              <button
+                className="text-button overview-signal-drill"
+                onClick={() =>
+                  onNavigate(
+                    devicesHash(
+                      true,
+                      signal.filter === "all" ? "" : signal.filter,
+                    ),
+                  )
+                }
+              >
+                View{" "}
+                {signal.filter === "all"
+                  ? "connected clients"
+                  : signal.filter === "WIRELESS"
+                    ? "wireless clients"
+                    : "wired clients"}{" "}
+                <ChevronRight size={14} />
+              </button>
+            </>
+          )}
         </aside>
       </div>
 
