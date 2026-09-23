@@ -1,0 +1,9 @@
+**
+!dashboard/
+!dashboard/**
+dashboard/frontend/node_modules/
+dashboard/frontend/dist/
+dashboard/**/__pycache__/
+dashboard/**/*.pyc
+dashboard/.venv/
+dashboard/**/*.mmdb

@@ -1,0 +1,106 @@
+name: visibility
+
+services:
+  logs:
+    image: victoriametrics/victoria-logs:v1.52.0
+    restart: unless-stopped
+    user: "${VISIBILITY_UID:-1000}:${VISIBILITY_GID:-1000}"
+    command:
+      - -storageDataPath=/storage
+      - -retentionPeriod=30d
+      - -storage.minFreeDiskSpaceBytes=20GiB
+      - -memory.allowedBytes=1GiB
+      - -httpListenAddr=:9428
+      - -syslog.listenAddr.tcp=:5514
+      - -syslog.listenAddr.udp=:5514
+      - -syslog.useRemoteIP.tcp
+      - -syslog.useRemoteIP.udp
+      - -syslog.timezone=America/New_York
+      - '-syslog.streamFields.tcp=["hostname","app_name"]'
+      - '-syslog.streamFields.udp=["hostname","app_name"]'
+    ports:
+      - "${SYSLOG_BIND_ADDRESS:?Set AI-02 LAN address in .env}:${SYSLOG_PORT:-514}:5514/tcp"
+      - "${SYSLOG_BIND_ADDRESS:?Set AI-02 LAN address in .env}:${SYSLOG_PORT:-514}:5514/udp"
+      - "127.0.0.1:${QUERY_PORT:-9428}:9428/tcp"
+    volumes:
+      - type: bind
+        source: ${LOG_DATA_DIR:?Set a persistent data directory in .env}
+        target: /storage
+        bind:
+          create_host_path: false
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: 2.0
+    mem_limit: 2g
+    memswap_limit: 2g
+    pids_limit: 128
+    stop_grace_period: 60s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  dashboard:
+    image: visibility-dashboard:0.5.0
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    restart: unless-stopped
+    user: "${VISIBILITY_UID:-1000}:${VISIBILITY_GID:-1000}"
+    environment:
+      VICTORIALOGS_URL: http://logs:9428
+      FIREWALL_SOURCE_IP: "${FIREWALL_SOURCE_IP:-192.168.5.1}"
+      LOCAL_NETWORKS: "${LOCAL_NETWORKS:-192.168.5.0/24,10.10.10.0/24,10.10.20.0/24}"
+      ALLOWED_HOSTS: "${DASHBOARD_ALLOWED_HOSTS:-192.168.5.230,ai-02,localhost,127.0.0.1}"
+      GEOIP_DATABASE: /geoip/dbip-city-lite.mmdb
+      LAB_LOCATION_LABEL: "${LAB_LOCATION_LABEL:-Rochester, NY}"
+      LAB_LATITUDE: "${LAB_LATITUDE:-43.1566}"
+      LAB_LONGITUDE: "${LAB_LONGITUDE:--77.6088}"
+      JEV_DATA_DIR: /analysis
+      TYPESAFE_API_KEY_FILE: /run/visibility-secrets/typesafe_api_key
+      UNIFI_INVENTORY_ENABLED: "${UNIFI_INVENTORY_ENABLED:-true}"
+      UNIFI_API_KEY_FILE: /run/visibility-secrets/unifi_api_key
+      UNIFI_SITE_ID: "${UNIFI_SITE_ID:-88f7af54-98f8-306a-a1c7-c9349722b1f6}"
+      UNIFI_CERT_SHA256: "${UNIFI_CERT_SHA256:-d961dfaf1d91c5790388c30a2a4de90d90990ddb15275e33b0aae6630dac3d40}"
+      PIHOLE_ENABLED: "${PIHOLE_ENABLED:-true}"
+      PIHOLE_PASSWORD_FILE: /run/visibility-secrets/pihole_app_password
+      PIHOLE_CERT_SHA256: "${PIHOLE_CERT_SHA256:-340389c84066e34b861bdbc1df06d3ec1e978aa3debe955593f4eec6d6bdaec1}"
+    ports:
+      - "${DASHBOARD_BIND_ADDRESS:-192.168.5.230}:${DASHBOARD_PORT:-8095}:8095/tcp"
+    volumes:
+      - type: bind
+        source: ${GEOIP_DATA_DIR:-/home/klab/.local/share/visibility/geoip}
+        target: /geoip
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${JEV_DATA_DIR:-/home/klab/.local/share/visibility/dashboard}
+        target: /analysis
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${VISIBILITY_SECRETS_DIR:-/home/klab/.local/share/visibility/secrets}
+        target: /run/visibility-secrets
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: 1.0
+    mem_limit: 768m
+    memswap_limit: 768m
+    pids_limit: 96
+    stop_grace_period: 35s
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "2"

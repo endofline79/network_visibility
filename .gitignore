@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+data/
+state/
+*.pcap
+*.pcapng
+node_modules/
+dist/
+.venv/
+*.mmdb
+*.mmdb.gz
+*.log
+.staging/
