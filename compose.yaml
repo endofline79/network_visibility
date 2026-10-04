@@ -45,7 +45,8 @@ services:
         max-file: "3"
 
   dashboard:
-    image: visibility-dashboard:0.5.0
+    profiles: [legacy-ui]
+    image: visibility-dashboard:0.6.0
     build:
       context: .
       dockerfile: dashboard/Dockerfile
@@ -53,6 +54,7 @@ services:
     user: "${VISIBILITY_UID:-1000}:${VISIBILITY_GID:-1000}"
     environment:
       VICTORIALOGS_URL: http://logs:9428
+      FLOW_COLLECTOR_URL: http://flows:8081
       FIREWALL_SOURCE_IP: "${FIREWALL_SOURCE_IP:-192.168.5.1}"
       LOCAL_NETWORKS: "${LOCAL_NETWORKS:-192.168.5.0/24,10.10.10.0/24,10.10.20.0/24}"
       ALLOWED_HOSTS: "${DASHBOARD_ALLOWED_HOSTS:-192.168.5.230,ai-02,localhost,127.0.0.1}"
@@ -98,6 +100,119 @@ services:
     mem_limit: 768m
     memswap_limit: 768m
     pids_limit: 96
+    stop_grace_period: 35s
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  telemetry:
+    image: visibility-telemetry:0.1.0
+    build:
+      context: .
+      dockerfile: telemetry/Dockerfile
+    restart: unless-stopped
+    user: "${VISIBILITY_UID:-1000}:${VISIBILITY_GID:-1000}"
+    environment:
+      VICTORIALOGS_URL: http://logs:9428
+      UNIFI_INVENTORY_ENABLED: "${UNIFI_INVENTORY_ENABLED:-true}"
+      UNIFI_API_KEY_FILE: /run/visibility-secrets/unifi_api_key
+      UNIFI_SITE_ID: "${UNIFI_SITE_ID:-88f7af54-98f8-306a-a1c7-c9349722b1f6}"
+      UNIFI_CERT_SHA256: "${UNIFI_CERT_SHA256:-d961dfaf1d91c5790388c30a2a4de90d90990ddb15275e33b0aae6630dac3d40}"
+      PIHOLE_ENABLED: "${PIHOLE_ENABLED:-true}"
+      PIHOLE_PASSWORD_FILE: /run/visibility-secrets/pihole_app_password
+      PIHOLE_CERT_SHA256: "${PIHOLE_CERT_SHA256:-340389c84066e34b861bdbc1df06d3ec1e978aa3debe955593f4eec6d6bdaec1}"
+    volumes:
+      - type: bind
+        source: ${JEV_DATA_DIR:-/home/klab/.local/share/visibility/dashboard}
+        target: /analysis
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${VISIBILITY_SECRETS_DIR:-/home/klab/.local/share/visibility/secrets}/unifi_api_key
+        target: /run/visibility-secrets/unifi_api_key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${VISIBILITY_SECRETS_DIR:-/home/klab/.local/share/visibility/secrets}/pihole_app_password
+        target: /run/visibility-secrets/pihole_app_password
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 1.0
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 32
+    stop_grace_period: 35s
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  api:
+    image: victoriametrics/vmauth:v1.152.0@sha256:486d8acf3665554ab362846272095b51832b5300e242d2e7d612d203a23ba145
+    restart: unless-stopped
+    user: "${VISIBILITY_UID:-1000}:${VISIBILITY_GID:-1000}"
+    command:
+      - -auth.config=/run/telemetry-api/auth.yaml
+      - -httpListenAddr=:8427
+      - -httpInternalListenAddr=127.0.0.1:8426
+      - -tls
+      - -tlsCertFile=/run/telemetry-api/server.crt
+      - -tlsKeyFile=/run/telemetry-api/server.key
+    ports:
+      - "${TELEMETRY_BIND_ADDRESS:-192.168.5.230}:${TELEMETRY_API_PORT:-9429}:8427/tcp"
+    volumes:
+      - type: bind
+        source: ${TELEMETRY_API_SECRETS_DIR:-/home/klab/.local/share/visibility/telemetry-api}
+        target: /run/telemetry-api
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 1.0
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 64
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  flows:
+    image: visibility-flows:0.1.0
+    build:
+      context: .
+      dockerfile: collector/Dockerfile
+    restart: unless-stopped
+    user: "${VISIBILITY_UID:-1000}:${VISIBILITY_GID:-1000}"
+    environment:
+      FLOW_EXPORTER: "192.168.5.1"
+      VICTORIALOGS_URL: http://logs:9428
+    ports:
+      - "192.168.5.230:2056:2056/udp"
+    volumes:
+      - type: bind
+        source: ${FLOW_DATA_DIR:-/home/klab/.local/share/visibility/flows}
+        target: /state
+        bind:
+          create_host_path: false
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 1.0
+    mem_limit: 512m
+    memswap_limit: 512m
+    pids_limit: 64
     stop_grace_period: 35s
     logging:
       driver: local

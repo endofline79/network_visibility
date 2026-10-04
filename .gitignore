@@ -14,3 +14,14 @@ dist/
 *.mmdb.gz
 *.log
 .staging/
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm

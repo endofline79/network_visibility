@@ -1,0 +1,34 @@
+# FreeBSD ng_netflow emits nonzero IN counters followed by zero OUT counters.
+# GoFlow2's default shared bytes/packets fields are overwritten by OUT. Preserve
+# the authoritative IN fields separately for both IPv4 and IPv6 templates.
+formatter:
+  fields:
+    - type
+    - time_received_ns
+    - sequence_num
+    - sampling_rate
+    - sampler_address
+    - time_flow_start_ns
+    - time_flow_end_ns
+    - src_addr
+    - dst_addr
+    - proto
+    - src_port
+    - dst_port
+    - in_if
+    - out_if
+    - opnsense_bytes
+    - opnsense_packets
+  protobuf:
+    - name: opnsense_bytes
+      index: 1000
+      type: varint
+    - name: opnsense_packets
+      index: 1001
+      type: varint
+netflowv9:
+  mapping:
+    - field: 1
+      destination: opnsense_bytes
+    - field: 2
+      destination: opnsense_packets

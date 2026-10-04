@@ -2698,3 +2698,9 @@ td > small {
     margin: 8px 0 0;
   }
 }
+/* Flow volumes remain visually distinct from firewall decision counts. */
+.traffic-view { display: grid; gap: 20px; }
+.traffic-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.traffic-view .health-card { min-width: 0; }
+.traffic-view table { width: 100%; }
+@media (max-width: 900px) { .traffic-summary { grid-template-columns: 1fr; } }

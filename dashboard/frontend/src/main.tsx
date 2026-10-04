@@ -25,6 +25,7 @@ import {
   Network,
 } from "lucide-react";
 import { Overview } from "./Overview";
+import { Traffic } from "./Traffic";
 import { JevTrial } from "./JevTrial";
 import { Inventory } from "./Inventory";
 import { Dns, DnsHealth } from "./Dns";
@@ -85,6 +86,7 @@ function App() {
   const [view, setView] = useState<View>(initialRoute.view);
   const [inventoryHealthy, setInventoryHealthy] = useState(false);
   const [dnsHealthy, setDnsHealthy] = useState(false);
+  const [trafficHealthy, setTrafficHealthy] = useState(false);
   const [windowValue, setWindow] = useState(initialRoute.window);
   const [data, setData] = useState<Snapshot | null>(null);
   const [rawData, setRawData] = useState<LogResponse | null>(null);
@@ -168,7 +170,7 @@ function App() {
     return () => clearInterval(t);
   }, []);
   useEffect(() => {
-    if (view === "jev" || view === "inventory" || dnsView) return;
+    if (view === "jev" || view === "inventory" || view === "traffic" || dnsView) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     let active = true;
@@ -346,14 +348,14 @@ function App() {
           VISIBILITY<span className="brand-sub">HOMELAB</span>
         </a>
         <nav aria-label="Main navigation">
-          {(["overview", "events", "inventory", "health", "jev"] as const).map(
+          {(["overview", "traffic", "events", "inventory", "health", "jev"] as const).map(
             (v) => (
               <button
                 key={v}
                 className={view === v ? "active" : ""}
                 onClick={() => {
                   navigate(
-                    v === "events"
+                    v === "traffic" ? "#traffic" : v === "events"
                       ? eventMode === "dns"
                         ? dnsHash()
                         : eventMode === "system"
@@ -398,7 +400,7 @@ function App() {
         </nav>
         <div className="top-end">
           <span
-            className={`status-dot ${(dnsView ? dnsHealthy : view === "inventory" ? inventoryHealthy : healthy) ? "good" : "quiet"}`}
+            className={`status-dot ${(view === "traffic" ? trafficHealthy : dnsView ? dnsHealthy : view === "inventory" ? inventoryHealthy : healthy) ? "good" : "quiet"}`}
           />
           <span className="host-name">AI-02</span>
           <button
@@ -415,7 +417,7 @@ function App() {
           <div>
             <div className="eyebrow">YOUR NETWORK, IN VIEW</div>
             <h1>
-              {view === "overview"
+              {view === "traffic" ? "Routed traffic" : view === "overview"
                 ? "Network overview"
                 : view === "events"
                   ? "Explore network activity"
@@ -426,7 +428,7 @@ function App() {
                       : "Collection health"}
             </h1>
             <p>
-              {view === "inventory"
+              {view === "traffic" ? "OPNsense flow volumes · separate from firewall decisions" : view === "inventory"
                 ? "UniFi devices, connected clients, and the links between them"
                 : view === "jev"
                   ? "Watch Jev classify fresh activity · bounded, metered experiments"
@@ -437,7 +439,7 @@ function App() {
                       : "A live view of firewall decisions, DNS queries, and connected clients"}
             </p>
           </div>
-          {!dnsView && view !== "jev" && view !== "inventory" && (
+          {!dnsView && view !== "jev" && view !== "inventory" && view !== "traffic" && (
             <div className="toolbar">
               <label className="range-picker">
                 <Clock3 size={16} />
@@ -526,6 +528,7 @@ function App() {
             }
           />
         )}
+        {view === "traffic" && <Traffic onHealth={setTrafficHealthy} />}
         {view === "jev" && <JevTrial onInspect={setSelected} />}
         {view === "inventory" && (
           <Inventory
@@ -538,7 +541,7 @@ function App() {
             }
           />
         )}
-        {!dnsView && view !== "jev" && view !== "inventory" && error && (
+        {!dnsView && view !== "jev" && view !== "inventory" && view !== "traffic" && error && (
           <div className="notice error" role="alert">
             <AlertCircle size={18} />
             <span>
@@ -578,6 +581,7 @@ function App() {
           view !== "jev" &&
           view !== "inventory" &&
           !data &&
+          view !== "traffic" &&
           !error &&
           view !== "overview" && (
             <div className="loading-state">
@@ -1018,9 +1022,9 @@ function App() {
         <footer className="footer">
           <span>
             <span
-              className={`status-dot ${(dnsView ? dnsHealthy : view === "inventory" ? inventoryHealthy : healthy) ? "good" : "quiet"}`}
+              className={`status-dot ${(view === "traffic" ? trafficHealthy : dnsView ? dnsHealthy : view === "inventory" ? inventoryHealthy : healthy) ? "good" : "quiet"}`}
             />
-            {dnsView
+            {view === "traffic" ? "Local NetFlow collection · OPNsense" : dnsView
               ? "Local DNS activity · Pi-hole"
               : view === "inventory"
                 ? "Local UniFi inventory · read-only collection"
@@ -1039,7 +1043,7 @@ function App() {
               ? " · refreshing"
               : ""}
           </span>
-          {dnsView ? (
+          {view === "traffic" ? <span>IP-layer counters · No switch mirroring · No AI requests</span> : dnsView ? (
             <span>Local collection · No AI requests</span>
           ) : view === "inventory" ? (
             <span>Current inventory · Identifiers remain on AI-02</span>

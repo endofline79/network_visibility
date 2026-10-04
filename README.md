@@ -1,12 +1,23 @@
 # Homelab visibility
 
+## Current deployment: headless telemetry
+
+As of 2026-09-24, the custom UI and Jev process are stopped. Use the
+**HTTPS native API at https://192.168.5.230:9429** with the Phase token and
+the global `homelab-telemetry` skill. See [API, collection, and rollback operations](docs/headless-telemetry.md).
+The dashboard descriptions below document the retained legacy UI, not an active service.
+
+## Retained legacy dashboard
+
 Receive, retain, and explore network logs on **AI-02 (192.168.5.230)**.
 
 Open the custom dashboard at **[http://192.168.5.230:8095](http://192.168.5.230:8095)**.
 It combines an interactive world map/globe, filtered firewall events, raw system
 logs, UniFi devices, Pi-hole DNS activity, and collection health. The lab marker uses the requested Rochester, NY
 city location. See [dashboard operations](docs/dashboard.md) and the
-[design notes](docs/dashboard-design.md). Alerting and NetFlow remain later phases.
+[design notes](docs/dashboard-design.md). OPNsense flow volumes are available in
+the [Traffic view](http://192.168.5.230:8095/#traffic); see [coverage, limitations,
+and rollback](docs/netflow.md). Alerting and switch mirroring remain deferred.
 
 The Overview deployed on 2026-09-23 adds source status, click-through summary
 cards, and a 24-hour firewall/DNS timeline. It comes from local commit `a64e1e1`.
@@ -31,7 +42,14 @@ and the [navigation and organization plan](docs/organization.md).
 
 ## Local source history
 
-This folder has a local Git repository on `main`. Commits provide a rollback
+The source repository is [endofline79/network_visibility](https://github.com/endofline79/network_visibility),
+with `main` as the primary branch. This is a homelab-specific project: deployment
+addresses, paths, and operational notes describe the existing lab and must be
+reviewed before deploying elsewhere. The repository is public; keep credentials,
+private keys, collected traffic, and runtime state outside Git. The checked-in
+`server.crt` is a public certificate used by the telemetry client, not a private key.
+
+Commits provide a rollback
 point for source, configuration templates, tests, and documentation. Check the
 working tree and recent commits before changing the app:
 
@@ -46,6 +64,36 @@ use `git revert COMMIT` to make an explicit rollback commit. Git does not track
 `.env`, `state/`, collector data, secrets, or generated build output, and a Git
 rollback does not change a running deployment. Follow the service-specific
 rollback instructions below when a deployed version must also be restored.
+
+To clone the source or synchronize a clean checkout:
+
+```bash
+git clone https://github.com/endofline79/network_visibility.git
+cd network_visibility
+git status --short
+git pull --ff-only
+```
+
+Before publishing changes, inspect the complete staged diff for credentials or
+collected data, then commit and push to the intended branch. Git pushes publish
+source only; they do not deploy or restart services.
+
+### Local validation
+
+The standard-library tests can run without contacting the homelab:
+
+```bash
+PYTHONPATH=dashboard:telemetry python3 -m unittest discover -s telemetry -v
+PYTHONPATH=collector python3 -m unittest discover -s collector -v
+python3 -m unittest discover -s tests -v
+```
+
+The collector decoder integration test is skipped when `goflow2` is unavailable;
+it also runs during the collector Docker build. For the dashboard suite, install
+`dashboard/requirements-test.txt` into an isolated virtual environment first,
+then run `PYTHONPATH=dashboard python -m unittest discover -s dashboard/tests -v`.
+In `dashboard/frontend`, run `npm ci` to install the lockfile dependencies, then
+`npm run test:routes` and `npm run build`.
 
 Initially deployed and verified on 2026-09-19 (America/New_York). See
 [VALIDATION.md](VALIDATION.md) for the acceptance results. OPNsense now forwards
@@ -169,8 +217,8 @@ does not prove that a real device is configured or can reach the collector.
 For OPNsense, real firewall and system records and a timestamped end-to-end probe
 have now been verified. Additional network devices still need separate setup.
 
-NetFlow is a different protocol and needs its own collector later. Traffic that
-never traverses OPNsense requires another observation point.
+NetFlow now has its own [collector and Traffic view](docs/netflow.md). Traffic
+that never traverses OPNsense still requires another observation point.
 
 The guarded helper uses the existing Phase-backed API credentials. From the
 operator workstation, inspect the current target without printing credentials:

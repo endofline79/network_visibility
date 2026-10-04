@@ -9,7 +9,7 @@ export const firewallWindows = [
 ] as const;
 export const dnsWindows = ["15m", "1h", "6h", "24h", "7d", "30d"] as const;
 
-export type View = "overview" | "events" | "inventory" | "health" | "jev";
+export type View = "overview" | "events" | "inventory" | "health" | "jev" | "traffic";
 export type EventMode = "firewall" | "dns" | "system";
 export type FirewallAction = "all" | "pass" | "block";
 export type DnsOutcome = "" | "blocked" | "cached" | "forwarded" | "other";
@@ -62,6 +62,7 @@ export function parseHash(hash: string): Route {
     };
   }
   if (path === "jev") return { ...defaults, view: "jev" };
+  if (path === "traffic") return { ...defaults, view: "traffic" };
   if (path === "collection") return { ...defaults, view: "health" };
   if (path === "dns" || path === "activity/dns") {
     return {

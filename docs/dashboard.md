@@ -1,7 +1,7 @@
 # Visibility dashboard
 
 Live on AI-02: **http://192.168.5.230:8095**. Compose service: `dashboard`;
-container: `visibility-dashboard-1`; image: `visibility-dashboard:0.5.0`.
+container: `visibility-dashboard-1`; image: `visibility-dashboard:0.6.0`.
 
 The Current signals drill-down correction from local commit `0c3adca` was
 deployed to AI-02 on 2026-09-23. Its previous image is retained as
@@ -98,8 +98,9 @@ limit shown. Selecting a country before mapping narrows the points.
 
 These are logged events, **not total bandwidth, active sessions, or all traffic**.
 Firewall `in`/`out` refers to the logging interface. Lines are illustrative
-connections, not actual routes. No additional rule logging or NetFlow export was
-enabled by this deployment. Wider flow coverage needs its own collection work.
+connections, not actual routes. No additional rule logging was enabled.
+The separate [Traffic view and collector](netflow.md), added 2026-09-23, show
+OPNsense egress flow volumes with explicit NAT, UDP-loss, and coverage limits.
 
 ## Build, update, and verify
 

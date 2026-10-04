@@ -16,6 +16,7 @@ import urllib.request
 
 import maxminddb
 from fastapi import FastAPI, HTTPException, Query
+from .flows import build_traffic
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
@@ -293,7 +294,12 @@ async def headers(request, call_next):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "version": "0.5.0"}
+    return {"status": "ok", "version": "0.6.0"}
+
+
+@app.get("/api/traffic")
+def traffic(window: Window = "15m"):
+    return cached(("traffic", window), lambda: build_traffic(query_logs, window))
 
 
 @app.get("/api/inventory")

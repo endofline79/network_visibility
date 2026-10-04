@@ -1,5 +1,29 @@
 # Intake validation — 2026-09-19 (America/New_York)
 
+## Headless telemetry — 2026-09-24 20:36 EDT cutover
+
+- Python 3.12 image build passed 20 existing Pi-hole/UniFi tests plus 3 new
+  snapshot identity, durable retry/restart, and corrupt-checkpoint tests.
+- HTTPS port 9429 uses the Phase agents / Production / TELEMETRY_API_TOKEN.
+  Verified trusted-certificate query success, missing/wrong token HTTP 401,
+  and rejection with default system trust. No secrets appeared in output.
+- Verified native field discovery, schema-2 event-ID-deduplicated flow totals,
+  stats_query_range, firewall parsing, backend health and metrics.
+- An eight-second native tail received 133 complete filterlog events through
+  TLS/auth. This demonstrates streaming, not guaranteed late-event delivery.
+- Both headless pollers are fresh with null errors and empty pending batches.
+  DNS historical checkpoint is retained; new inventory snapshots contain
+  3 devices, 18 clients, and 2 networks with partial=false at validation time.
+- Visibility exited cleanly and remains available under profile legacy-ui.
+  Logs retained start 2026-09-20T02:01:20.569305852Z; flows retained start
+  2026-09-24T02:35:17.13425861Z. Neither container was restarted.
+- Global skill validation passed. Source and stopped poller-state archives
+  are retained; see docs/headless-telemetry.md for exact locations/rollback.
+- Six HTTPS client regression tests and six existing firewall parser tests
+  also passed (35 total tests across pollers, archive, client, and parser).
+  At 20:41 EDT both pollers were fresh, archive queues empty, DNS through
+  00:39:34 UTC and advancing; all four running containers had zero restarts.
+
 ## Approved controller syslog rule — 2026-09-20 21:54–21:58 (America/New_York)
 
 - User explicitly approved adding the prepared exception. Added UUID
@@ -453,3 +477,57 @@ and [organization notes](docs/organization.md) for the next design decisions.
 - Rollback is the saved image tag plus a dashboard-only Compose recreate. See
   [dashboard operations](docs/dashboard.md#rollback); source restoration requires
   review of the saved archive before rebuilding.
+
+## OPNsense flows — deployed 2026-09-23 EDT / 2026-09-24 UTC
+
+- Added source-gated UDP2056, pinned GoFlow2 v2.2.6, a 100,000-record durable
+  spool, normalized VictoriaLogs records and a read-only Traffic API/UI.
+- OPNsense exports v9 egress-only on WAN, LAN, LAB and INFRA (bridge0), with
+  active/inactive timeouts 60/15 seconds. Local Insight remains off.
+  Supported API only; no installed firewall service files were edited.
+  The protected configuration fingerprint matched before/after and after the
+  final template refresh: no switch, filter, NAT, routing, VLAN or syslog edits.
+- Builds passed 64 backend tests, 5 collector tests including a real-decoder
+  FreeBSD-template regression and failed-insert replay, 2 route tests,
+  TypeScript and production frontend builds.
+- Ten 1,000-byte ICMP payloads AI-02 to controller yielded exactly 10 packets /
+  10,280 IP bytes per direction. Ten 1,100-byte payloads to Kitchen AP yielded
+  11,280 bytes per direction. Neither bridged path was doubled.
+- Ten 1,200-byte payloads to 1.1.1.1 yielded 12,280 bytes per direction;
+  upload source was the post-NAT WAN address, download destination AI-02.
+  All probes returned 10/10 replies. LAB and IPv6 live paths remain untested.
+- Startup validation caught the FreeBSD IN/OUT counter overwrite; explicit
+  mapping fixed it. Zero-counter schema-1 bootstrap records remain in All logs
+  but are excluded from Traffic. There is a startup gap, not a backfill.
+- Final application restart lost 16 export datagrams while waiting for v9
+  templates; the UI exposes these decoder errors. Fresh records subsequently
+  arrived, with zero invalid records, buffer overflow or UDP receive errors,
+  no insert error and no backlog. UDP cannot guarantee complete accounting.
+- Dashboard 0.6.0 and flows 0.1.0 were healthy with zero restart loops. Logs
+  retained its original start time 2026-09-20 02:01:20 UTC. Pi-hole and UniFi
+  remained fresh; DNS backlog was zero; Jev stayed disabled. Flow container
+  used about 37 MiB during initial measurement.
+- Browser inspection confirmed the Traffic page, populated totals and tables,
+  coverage warnings, and collector status. See [runbook](docs/netflow.md) for
+  latency, NAT attribution, source-IP authentication limits and rollback.
+- Code is present as uncommitted changes in the local source repository and
+  deployed to AI-02. Remote README was preserved. Existing secrets, .env,
+  database and dashboard-state files were not overwritten.
+# GitHub source publication — 2026-10-04
+
+Prepared the existing local history and current NetFlow/headless telemetry source
+for `https://github.com/endofline79/network_visibility` on `main`. No deployment
+or live service changes were made as part of repository setup.
+
+- Checked current source and all historical Git blobs with credential patterns;
+  the only match was an environment-variable name used to retrieve a secret.
+  This was a limited pattern scan, not a comprehensive security audit.
+- Expanded ignore rules for private keys, secret directories, and SQLite state.
+- Frontend: both route tests and the TypeScript/Vite production build passed.
+- Python: 44 tests passed across telemetry, collector, rule guards, and the
+  available dashboard tests. One decoder integration test was skipped because
+  `goflow2` is not installed locally.
+- Four dashboard test modules (`test_api`, `test_flows`, `test_jev`, and
+  `test_jev_stream`) could not import because local Python lacks `fastapi`.
+  The complete dashboard suite remains unverified in this environment; see
+  the README for dependency installation and test commands.
