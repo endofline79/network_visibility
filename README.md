@@ -4,7 +4,7 @@
 
 Open the read-only presentation console at
 **[https://192.168.5.230:8096/](https://192.168.5.230:8096/)**.
-It shows the current network view and the alerting panel. The HTTPS telemetry
+It shows the current network view, the alerting panel, and Ops Home. The HTTPS telemetry
 API is at **[https://192.168.5.230:9429](https://192.168.5.230:9429)**. Use it
 with the Phase token and the global `homelab-telemetry` skill. See
 [API, collection, and rollback operations](docs/headless-telemetry.md) and
@@ -15,7 +15,7 @@ The console was deployed on October 12. See the
 [certificate review](docs/dashboard-certificate-review-2026-10-12.md).
 Its default [Compose configuration](compose.presentation.yaml) is a loopback-only
 synthetic demo. From the checkout, `docker compose -f compose.presentation.yaml build console`
-builds and tags `visibility-console:0.2.0` from `presentation/`. The live
+builds and tags `visibility-console:0.3.0` from `presentation/`. The live
 Compose file is on the host, not in Git; it references that tag and does not
 build it. See [presentation-deploy](presentation-deploy/README.md). Live
 settings and credentials remain outside Git. The previous live image is

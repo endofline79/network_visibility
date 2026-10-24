@@ -10,6 +10,10 @@ Current surfaces stay the console at **https://192.168.5.230:8096/** and the
 telemetry API at **https://192.168.5.230:9429**. The stopped `:8095` dashboard
 is not part of alerting.
 
+Ops Home ships in `visibility-console:0.3.0`. Build and recreate only the
+console the same way, and roll that page back to `visibility-console:0.2.0`.
+See the presentation README. The steps below record the `0.2.0` alerting rollout.
+
 ## What restarts
 
 | Step | Containers |

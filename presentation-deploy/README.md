@@ -1,7 +1,9 @@
 # Presentation deploy
 
-The live console on AI-02 is `visibility-console:0.2.0`. The image that was
-running before that tag is `visibility-console:layout-19604db9bdbf`.
+This checkout builds `visibility-console:0.3.0` for Ops Home. The console image
+deployed for tiered alerting is `visibility-console:0.2.0` until that container
+is recreated. The image before alerting is
+`visibility-console:layout-19604db9bdbf`.
 
 `compose.live.yaml` stays on the host at
 `/home/klab/.local/share/visibility/presentation-deploy/compose.live.yaml`.
@@ -30,7 +32,8 @@ docker compose -f presentation-deploy/compose.build.yaml build console
 ```
 
 Either command only builds. It does not recreate the live container. After the
-image exists, set the host file's console image to `visibility-console:0.2.0`
+image exists, set the host file's console image to `visibility-console:0.3.0`
 and recreate the console without `--build`, as [alerting](../docs/alerting.md)
-describes. To roll the panel back, point that same image line at
-`visibility-console:layout-19604db9bdbf`.
+describes for the previous console image. To roll Ops Home back, point that
+same image line at `visibility-console:0.2.0`. The image before alerting
+remains `visibility-console:layout-19604db9bdbf`.
