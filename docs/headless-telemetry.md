@@ -20,6 +20,9 @@ analysis history, and state remain available for rollback; no data was deleted.
   authenticated `/metrics` and `/health` on port 9429 reach VictoriaLogs.
 - `dashboard`: profile `legacy-ui`, stopped. Never run it concurrently with
   `telemetry`: both would own the same Pi-hole checkpoint and inventory cache.
+- Alerting is a separate service and is not started by the commands in this
+  note. See [tiered alerting](alerting.md). Do not reuse the operator token
+  for the alert inserter.
 
 The DNS archive checkpoint continues from September 22. New `unifi-snapshot`
 and `pihole-snapshot` streams begin at this deployment; no inventory history

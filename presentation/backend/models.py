@@ -37,6 +37,12 @@ class Overview(Model):
     devices:list[Device];recent:list[Recent];trend:list[Bin];coverage:list[str];issues:list[str];geo:Geo
 class LiveCountry(Country):
     last_seen:str;activity_id:str
+class Alert(Model):
+    fingerprint:str;rule:str;severity:Literal['info','warning','critical'];state:Literal['firing','resolved']
+    subject:str;summary:str;first_seen:str;last_seen:str;age_seconds:int;evidence_query:str
+class Alerts(Model):
+    mode:Literal['demo','live'];as_of:str;checker:Literal['ok','silent','unknown'];illustrative:bool
+    open:list[Alert];resolved:list[Alert]
 class GlobeSnapshot(Model):
     mode:Literal['demo','live'];as_of:str;window:Window;refresh_seconds:int
     state:Literal['fresh','stale','partial','unavailable'];observed_at:str|None

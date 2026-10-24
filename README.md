@@ -1,17 +1,25 @@
 # Homelab visibility
 
-## Telemetry API and presentation
+## Console and telemetry API
 
-The legacy dashboard and Jev process were stopped on 2026-09-24. Use the
-**HTTPS native API at https://192.168.5.230:9429** with the Phase token and
-the global `homelab-telemetry` skill. See [API, collection, and rollback operations](docs/headless-telemetry.md).
-The newer read-only [presentation app](presentation/README.md) was deployed at
-**https://192.168.5.230:8096/** on October 12; see the dated
+Open the read-only presentation console at
+**[https://192.168.5.230:8096/](https://192.168.5.230:8096/)**.
+It shows the current network view and the alerting panel. The HTTPS telemetry
+API is at **[https://192.168.5.230:9429](https://192.168.5.230:9429)**. Use it
+with the Phase token and the global `homelab-telemetry` skill. See
+[API, collection, and rollback operations](docs/headless-telemetry.md) and
+[tiered alerting](docs/alerting.md).
+
+The console was deployed on October 12. See the
 [layout release](docs/layout-release-2026-10-12.md) and
 [certificate review](docs/dashboard-certificate-review-2026-10-12.md).
 Its default [Compose configuration](compose.presentation.yaml) is a loopback-only
-synthetic demo. Live deployment settings and credentials remain outside Git.
-The dashboard descriptions below document the retained legacy UI.
+synthetic demo (`visibility-console:0.2.0`). Live deployment settings and
+credentials remain outside Git.
+
+The legacy dashboard and Jev process were stopped on 2026-09-24. Port 8095
+stays with the `legacy-ui` profile and is not the current console. The
+dashboard descriptions below document that retained UI.
 
 ## Retained legacy dashboard
 
@@ -23,7 +31,8 @@ logs, UniFi devices, Pi-hole DNS activity, and collection health. The lab marker
 city location. See [dashboard operations](docs/dashboard.md) and the
 [design notes](docs/dashboard-design.md). OPNsense flow volumes are available in
 the [Traffic view](http://192.168.5.230:8095/#traffic); see [coverage, limitations,
-and rollback](docs/netflow.md). Alerting and switch mirroring remain deferred.
+and rollback](docs/netflow.md). Switch mirroring remains deferred. Alerting
+is described in [tiered alerting](docs/alerting.md).
 
 The Overview deployed on 2026-09-23 adds source status, click-through summary
 cards, and a 24-hour firewall/DNS timeline. It comes from local commit `a64e1e1`.
@@ -94,6 +103,7 @@ The standard-library tests can run without contacting the homelab:
 ```bash
 PYTHONPATH=dashboard:telemetry python3 -m unittest discover -s telemetry -v
 PYTHONPATH=collector python3 -m unittest discover -s collector -v
+PYTHONPATH=alerter python3 -m unittest discover -s alerter -p 'test_*.py' -v
 python3 -m unittest discover -s tests -v
 ```
 

@@ -5,7 +5,10 @@
 !collector/**
 !telemetry/
 !telemetry/**
+!alerter/
+!alerter/**
 telemetry/__pycache__/
+alerter/__pycache__/
 collector/__pycache__/
 dashboard/frontend/node_modules/
 dashboard/frontend/dist/

@@ -2,6 +2,8 @@
 
 A read-only presentation of existing Visibility telemetry. The map extends presentation read models; it does not start, configure or restart collectors. Live mode requires the existing authenticated viewer and fixed-origin HTTPS query client. Credentials, source gates, retention, query limits and network configuration remain unchanged.
 
+`GET /api/alerts` lists open alerts and alerts resolved in the last day. Demo mode returns labelled illustrative alerts. The desktop workspace shows a short Alerts strip above the map; narrower windows keep that strip out of the fixed layout and open the same list from **Alerts** or **Needs attention**. The console does not write alerts or call the webhook.
+
 The globe is replaced by a locally bundled vector world map. Drag pans; accessible buttons and arrow keys pan/zoom, Home fits the world, and zoom is bounded from 100% to 800%. Fit selected country/areas uses the current geographic estimates. Ordinary wheel and vertical touch gestures scroll the relevant pane when it has overflow; the document stays fixed. A visible opt-in toggle enables wheel/pinch zoom and two-dimensional touch pan. Movement, multiple pointers, cancellation and held drags consume selection for the entire gesture. Country filters and area details do not reset the camera on refresh. Reduced motion disables observation highlighting. No third-party tiles, geolocation requests, tracking or external browser requests are required.
 
 ## Map layout

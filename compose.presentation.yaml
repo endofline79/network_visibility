@@ -1,7 +1,7 @@
 name: visibility-presentation
 services:
   console:
-    image: visibility-console:0.1.0
+    image: visibility-console:0.2.0
     build:
       context: ./presentation
     restart: "no"

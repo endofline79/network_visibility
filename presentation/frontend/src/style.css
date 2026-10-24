@@ -846,6 +846,9 @@ dialog::backdrop {
   .sidebar nav svg {
     width: 16px;
   }
+  .sidebar nav button.nav-alerts {
+    display: none;
+  }
   .sidebar-bottom {
     display: none;
   }

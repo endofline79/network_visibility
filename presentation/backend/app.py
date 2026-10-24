@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .demo import demo
-from .models import Overview,GlobeSnapshot
+from .models import Overview,GlobeSnapshot,Alerts
 from .auth import Viewer,Login,same_origin
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -51,7 +51,7 @@ def logout(request:Request):
     same_origin(request);request.session.clear()
     return {'authenticated':False}
 @app.get('/api/health')
-def health():return {'status':'ok','mode':MODE,'version':'0.1.0'}
+def health():return {'status':'ok','mode':MODE,'version':'0.2.0'}
 @app.get('/api/overview',response_model=Overview)
 def overview(window:Literal['15m','1h','24h']='1h',scenario:Literal['normal','stale','unavailable','error']='normal',end:datetime|None=None):
     anchor=end or datetime.now(timezone.utc).replace(second=0,microsecond=0)
@@ -67,6 +67,14 @@ def overview(window:Literal['15m','1h','24h']='1h',scenario:Literal['normal','st
     from .service import service
     try:return service.overview(anchor,seconds)
     except Exception:raise HTTPException(503,'Telemetry cannot be validated right now') from None
+@app.get('/api/alerts',response_model=Alerts)
+def alerts():
+    from . import alerts as alert_view
+    if MODE=='demo':return alert_view.demo_alerts()
+    try:
+        from .service import service
+        return alert_view.live_alerts(service.client)
+    except Exception:raise HTTPException(503,'Alerts cannot be validated right now') from None
 @app.get('/api/globe',response_model=GlobeSnapshot)
 def live_globe(scenario:Literal['normal','stale','unavailable','error']='normal'):
     if MODE=='demo':
