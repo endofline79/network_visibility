@@ -1,0 +1,105 @@
+{
+  // Version 1 rules. Edit thresholds here; the checker reloads this file every cycle.
+  // Full-line comments start with //. Do not put secrets in this file.
+  "version": 1,
+  "interval_seconds": 60,
+  "hostname": "ai-02",
+  "console_url": "https://192.168.5.230:8096/",
+  "warning_notify_after_seconds": 1800,
+  "renotify_seconds": 3600,
+  "webhook_max_per_hour": 30,
+  "webhook_timeout_seconds": 8,
+  "webhook_backoff_seconds": [2, 5, 15, 30, 60],
+  "webhook_header": "Authorization",
+  "webhook_header_prefix": "Bearer ",
+  "heartbeat_stale_seconds": 180,
+  "query_timeout_seconds": 8,
+  "insert_url": "https://api:8427/insert/jsonline?_stream_fields=hostname,app_name",
+  "insert_token_file": "/run/visibility-secrets/alert_insert_token",
+  "insert_cert_file": "/certs/telemetry-api/server.crt",
+  "webhook_url_file": "/run/visibility-secrets/alert_webhook_url",
+  "webhook_key_file": "/run/visibility-secrets/alert_webhook_key",
+  "state_dir": "/state",
+  "victorialogs_url": "http://logs:9428",
+  "cert_dir": "/certs/public",
+  "cert_thresholds_days": {"info": 60, "warning": 30, "critical": 7},
+  "staleness": {"warning_seconds": 900, "critical_seconds": 1800},
+  "sources": [
+    {"id": "filterlog", "title": "OPNsense firewall", "query": "app_name:=filterlog", "cadence_seconds": 120, "lookback": "6h"},
+    {"id": "opnsense-flow", "title": "NetFlow", "query": "app_name:=opnsense-flow schema:=2", "cadence_seconds": 300, "lookback": "6h"},
+    {"id": "unifi-snapshot", "title": "UniFi inventory", "query": "app_name:=unifi-snapshot entity_kind:=snapshot", "cadence_seconds": 90, "lookback": "6h"},
+    {"id": "pihole-dns", "title": "Pi-hole DNS", "query": "app_name:=pihole-dns", "cadence_seconds": 180, "lookback": "6h"},
+    {"id": "pihole-snapshot", "title": "Pi-hole summary", "query": "app_name:=pihole-snapshot entity_kind:=snapshot", "cadence_seconds": 90, "lookback": "6h"},
+    {"id": "opnsense-syslog", "title": "OPNsense syslog", "query": "hostname:=OPNsense.internal", "cadence_seconds": 120, "lookback": "6h"}
+  ],
+  "disk": {
+    "path": "/data",
+    "warning_percent": 80,
+    "critical_percent": 90,
+    "warning_clear_percent": 75,
+    "critical_clear_percent": 85
+  },
+  "certificates": [
+    {"name": "telemetry-api", "path": "/certs/telemetry-api/server.crt", "required": true},
+    {"name": "presentation-ca", "path": "/certs/presentation/dashboard-ca.crt", "required": false}
+  ],
+  "remote_certs": [
+    {"name": "unifi-controller", "host": "10.10.20.50", "port": 11443, "sha256": "d961dfaf1d91c5790388c30a2a4de90d90990ddb15275e33b0aae6630dac3d40"},
+    {"name": "pihole", "host": "192.168.5.238", "port": 443, "sha256": "340389c84066e34b861bdbc1df06d3ec1e978aa3debe955593f4eec6d6bdaec1"}
+  ],
+  "metrics": {
+    "read_only": "vl_storage_is_read_only",
+    "dropped_rows": "vl_rows_dropped_total",
+    "query_errors": ["vl_http_request_errors_total"]
+  },
+  "query_error_query": "_time:15m (app_name:=victoria-logs OR app_name:=victorialogs) (\"memory limit\" OR \"cannot execute the query\") | limit 20",
+  "containers": {
+    "socket": "/var/run/docker.sock",
+    "required": true,
+    "projects": ["visibility", "visibility-presentation"],
+    "expect": [
+      "visibility-logs-1",
+      "visibility-flows-1",
+      "visibility-telemetry-1",
+      "visibility-api-1",
+      "visibility-alerter-1",
+      "visibility-presentation-console-1"
+    ]
+  },
+  "probes": [
+    {"id": "logs", "url": "http://logs:9428/health", "container": "visibility-logs-1"},
+    {"id": "flows", "url": "http://flows:8081/health", "container": "visibility-flows-1"},
+    {"id": "api", "url": "https://api:8427/health", "container": "visibility-api-1", "tls": true}
+  ],
+  "gateway_query": "_time:30m hostname:=OPNsense.internal \"dpinger\" | sort by (_time) desc | limit 20",
+  "wan_ingress": {
+    "interfaces": ["igc0"],
+    "query": "_time:5m app_name:=filterlog \"igc0\" \"pass\" | limit 2000",
+    "allow": []
+  },
+  "block_spike": {
+    "recent_query": "_time:15m app_name:=filterlog \"block\" | stats count() rows",
+    "baseline_query": "_time:24h app_name:=filterlog \"block\" | stats by (_time:15m) count() rows",
+    "evidence_query": "_time:15m app_name:=filterlog \"block\" | stats count() rows",
+    "multiplier": 3,
+    "min_blocks": 50,
+    "min_baseline": 5
+  },
+  "new_entities": {"dwell_seconds": 86400, "max_tracked": 5000},
+  "rules": {
+    "source-freshness": {"fire_after_seconds": 0, "resolve_after_seconds": 180, "renotify_seconds": 3600},
+    "new-entity": {"fire_after_seconds": 0, "resolve_after_seconds": 0, "renotify_seconds": 86400, "notify": "never"},
+    "cert-expiry": {"fire_after_seconds": 0, "resolve_after_seconds": 300, "renotify_seconds": 86400},
+    "cert-pin": {"fire_after_seconds": 0, "resolve_after_seconds": 300, "renotify_seconds": 3600},
+    "disk-usage": {"fire_after_seconds": 0, "resolve_after_seconds": 180, "renotify_seconds": 3600},
+    "query-errors": {"fire_after_seconds": 60, "resolve_after_seconds": 300, "renotify_seconds": 3600},
+    "storage-readonly": {"fire_after_seconds": 0, "resolve_after_seconds": 120, "renotify_seconds": 900},
+    "rows-dropped": {"fire_after_seconds": 0, "resolve_after_seconds": 300, "renotify_seconds": 900},
+    "container-health": {"fire_after_seconds": 0, "resolve_after_seconds": 120, "renotify_seconds": 900},
+    "gateway-down": {"fire_after_seconds": 0, "resolve_after_seconds": 180, "renotify_seconds": 900},
+    "wan-ingress": {"fire_after_seconds": 0, "resolve_after_seconds": 300, "renotify_seconds": 1800},
+    "block-spike": {"fire_after_seconds": 120, "resolve_after_seconds": 600, "renotify_seconds": 3600},
+    "webhook-rate": {"fire_after_seconds": 0, "resolve_after_seconds": 600, "renotify_seconds": 3600, "notify": "immediate"},
+    "dry-run": {"fire_after_seconds": 0, "resolve_after_seconds": 120, "renotify_seconds": 86400}
+  }
+}

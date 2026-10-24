@@ -11,6 +11,7 @@ Single-node VictoriaLogs v1.52.0 on AI-02, 30-day retention. Raw backend HTTP is
 | `app_name:=pihole-dns` | DNS events: domain, query_type, status, outcome, client_ip, client_name, upstream, reply_type | Deduplicate `event_id`. Queries only seen by Pi-hole. Polling is 60s with 60s settling; not live packet capture. |
 | `app_name:=unifi-snapshot` | Periodic inventory, devices, clients, networks; starts with headless deployment | `entity_kind` is snapshot/device/client/network. Samples, not a complete change audit. |
 | `app_name:=pihole-snapshot` | Periodic Pi-hole summary in `snapshot_json` | Rolling source counters; do not sum snapshots as event totals. |
+| `app_name:=visibility-alert` | Alert checker transitions and heartbeats: fingerprint, rule, severity, state, subject, summary, first_seen, last_seen, evidence_query, details | Written by the insert-only `alert-inserter` user. `kind:=transition` is a state change; `kind:=heartbeat` is the checker cycle. Deduplicate by fingerprint and keep the newest `_time`. See [alerting](../../../docs/alerting.md). |
 | Other app_name values | Raw OPNsense / UniFi syslog | Discover actual sources; messages vary by firmware and logging configuration. |
 
 System-wide `app_name` discovery also includes records that are not network traffic. Do not sum all sources together as one traffic total.

@@ -32,10 +32,63 @@
 }
 .dashboard-shell .toolbar,
 .dashboard-shell .metrics,
+.dashboard-shell .alerts-panel,
 .dashboard-shell footer,
 .dashboard-shell .demo-controls {
   flex-shrink: 0;
   margin: 0;
+}
+.dashboard-shell .alerts-panel {
+  max-height: 112px;
+  overflow: auto;
+  padding: 8px 12px;
+  border: 1px solid #152832;
+  border-radius: 8px;
+  background: #0b1820;
+}
+.dashboard-shell .alerts-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dashboard-shell .alerts-heading h2 {
+  font-size: 13px;
+}
+.dashboard-shell .alerts-heading span,
+.dashboard-shell .alerts-panel .muted,
+.dashboard-shell .alerts-panel summary {
+  font-size: 11px;
+  color: #8aa6b8;
+}
+.dashboard-shell .alerts-heading .text-button {
+  margin-left: auto;
+}
+.dashboard-shell .alerts-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 120px) minmax(0, 140px) 52px minmax(
+      0,
+      1fr
+    );
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  padding: 2px 0;
+}
+.dashboard-shell .alerts-rule,
+.dashboard-shell .alerts-subject,
+.dashboard-shell .alerts-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dashboard-shell .sev-critical {
+  color: #ff8d8d;
+}
+.dashboard-shell .sev-warning {
+  color: #e7c386;
+}
+.dashboard-shell .sev-info {
+  color: #9fd7e8;
 }
 .dashboard-shell .toolbar h1 {
   font-size: 18px;
@@ -378,6 +431,9 @@
   }
 }
 @media (max-width: 1100px) {
+  .dashboard-shell .alerts-panel {
+    display: none;
+  }
   .dashboard-shell > main,
   .dashboard-shell > main:has(.with-details) {
     margin-right: 0;

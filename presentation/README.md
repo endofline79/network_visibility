@@ -2,6 +2,8 @@
 
 A read-only presentation of existing Visibility telemetry. The map extends presentation read models; it does not start, configure or restart collectors. Live mode requires the existing authenticated viewer and fixed-origin HTTPS query client. Credentials, source gates, retention, query limits and network configuration remain unchanged.
 
+`GET /api/alerts` lists open alerts and alerts resolved in the last day. Demo mode returns labelled illustrative alerts. The desktop workspace shows a short Alerts strip above the map; narrower windows keep that strip out of the fixed layout and open the same list from **Alerts** or **Needs attention**. The console does not write alerts or call the webhook.
+
 The globe is replaced by a locally bundled vector world map. Drag pans; accessible buttons and arrow keys pan/zoom, Home fits the world, and zoom is bounded from 100% to 800%. Fit selected country/areas uses the current geographic estimates. Ordinary wheel and vertical touch gestures scroll the relevant pane when it has overflow; the document stays fixed. A visible opt-in toggle enables wheel/pinch zoom and two-dimensional touch pan. Movement, multiple pointers, cancellation and held drags consume selection for the entire gesture. Country filters and area details do not reset the camera on refresh. Reduced motion disables observation highlighting. No third-party tiles, geolocation requests, tracking or external browser requests are required.
 
 ## Map layout
@@ -68,7 +70,7 @@ Observation highlights key off canonical area IDs and newer flow-end timestamps.
 
 ## Preview and verification
 
-Default mode is a clearly labelled synthetic demo; live data is never replaced by demo fixtures. Build with `npm --prefix frontend run build`, serve `backend.app:app` on loopback, and use the existing Python requirements. Map assets come from the already pinned `@d3-maps/atlas`, d3-geo and topojson-client dependencies. See THIRD_PARTY.md and the bundled atlas license.
+Default mode is a clearly labelled synthetic demo; live data is never replaced by demo fixtures. From the repository root, `docker compose -f compose.presentation.yaml build console` builds `visibility-console:0.2.0` using this directory as the Docker context. The live host Compose file does not contain that build. Build the frontend for a local preview with `npm --prefix frontend run build`, serve `backend.app:app` on loopback, and use the existing Python requirements. Map assets come from the already pinned `@d3-maps/atlas`, d3-geo and topojson-client dependencies. See THIRD_PARTY.md and the bundled atlas license.
 
 From the repository root, prepare an isolated local environment (Python 3.12+
 and Node.js 22):

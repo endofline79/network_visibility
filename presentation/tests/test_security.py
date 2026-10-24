@@ -25,6 +25,8 @@ from backend.app import app
 c=TestClient(app,base_url='https://testserver')
 assert c.get('/api/overview').status_code==401
 assert c.get('/api/globe').status_code==401
+assert c.get('/api/alerts').status_code==401
+assert c.post('/api/alerts',json={}).status_code==405
 assert c.post('/api/session/login',json={'username':'viewer-test','password':'test-only-password'}).status_code==403
 r=c.post('/api/session/login',headers={'Origin':'https://testserver'},json={'username':'viewer-test','password':'test-only-password'})
 assert r.status_code==200
@@ -39,9 +41,16 @@ with patch.object(globe_service,'snapshot',return_value={'mode':'live','as_of':'
  assert read.call_count==1
  assert c.get('/api/globe?scenario=stale').status_code==422
  assert c.post('/api/globe',json={}).status_code==405
+from backend import alerts as alerts_mod
+fixture={'mode':'live','as_of':'2026-10-24T16:00:00Z','checker':'ok','illustrative':False,'open':[],'resolved':[]}
+with patch.object(alerts_mod,'live_alerts',return_value=fixture) as read_alerts:
+ assert c.get('/api/alerts').status_code==200
+ assert read_alerts.call_count==1
+ assert c.post('/api/alerts',json={}).status_code==405
 assert c.post('/api/session/logout',headers={'Origin':'https://testserver'},json={}).status_code==200
 assert c.get('/api/overview').status_code==401
 assert c.get('/api/globe').status_code==401
+assert c.get('/api/alerts').status_code==401
 print('authenticated-session-contract-ok')
 '''
    r=subprocess.run([sys.executable,'-c',program],env=env,text=True,capture_output=True,timeout=15)

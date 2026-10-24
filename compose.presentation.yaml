@@ -1,9 +1,14 @@
+# Loopback demo. From this directory:
+#   docker compose -f compose.presentation.yaml build console
+# tags visibility-console:0.2.0 using ./presentation (Dockerfile, backend, frontend).
+# The host file compose.live.yaml is not in Git and has no build key.
 name: visibility-presentation
 services:
   console:
-    image: visibility-console:0.1.0
+    image: visibility-console:0.2.0
     build:
       context: ./presentation
+      dockerfile: Dockerfile
     restart: "no"
     environment:
       PRESENTATION_MODE: demo

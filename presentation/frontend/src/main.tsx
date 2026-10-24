@@ -19,9 +19,10 @@ import {
   Menu,
   Database,
   AlertTriangle,
+  Bell,
 } from "lucide-react";
 import { WorldView } from "./WorldView";
-import type { Overview } from "./types";
+import type { Alerts, Overview } from "./types";
 import "./style.css";
 import "./dashboard.css";
 const count = (v: number | null | undefined) =>
@@ -43,6 +44,14 @@ const age = (t: string | null) => {
       ? `${Math.floor(s / 60)} min ago`
       : `${Math.floor(s / 3600)} hr ago`;
 };
+const duration = (seconds: number) =>
+  seconds < 60
+    ? "Just now"
+    : seconds < 3600
+      ? `${Math.floor(seconds / 60)} min`
+      : seconds < 86400
+        ? `${Math.floor(seconds / 3600)} hr`
+        : `${Math.floor(seconds / 86400)} d`;
 const flag = (code: string) =>
   /^[A-Z]{2}$/.test(code)
     ? String.fromCodePoint(...[...code].map((x) => x.charCodeAt(0) + 127397))
@@ -51,6 +60,7 @@ function App() {
   const [needsLogin, setNeedsLogin] = useState(false),
     [loginError, setLoginError] = useState("");
   const [data, setData] = useState<Overview | null>(null),
+    [alerts, setAlerts] = useState<Alerts | null>(null),
     [window, setWindow] = useState("1h"),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true),
@@ -66,12 +76,26 @@ function App() {
     abort.current?.abort();
     const c = new AbortController();
     abort.current = c;
+    const alertsPromise = fetch("/api/alerts", {
+      signal: c.signal,
+      cache: "no-store",
+    })
+      .then(async (r) => {
+        if (r.status === 401) return { unauthorized: true as const };
+        if (!r.ok) return { failed: true as const };
+        return { body: (await r.json()) as Alerts };
+      })
+      .catch(() => ({ failed: true as const }));
     try {
       const r = await fetch(
         `/api/overview?window=${window}&scenario=${scenario}`,
         { signal: c.signal, cache: "no-store" },
       );
-      if (r.status === 401) {
+      const alertsResult = await alertsPromise;
+      if (
+        r.status === 401 ||
+        ("unauthorized" in alertsResult && alertsResult.unauthorized)
+      ) {
         setNeedsLogin(true);
         return;
       }
@@ -79,6 +103,8 @@ function App() {
       setNeedsLogin(false);
       setData(await r.json());
       setError("");
+      const nextAlerts = "body" in alertsResult ? alertsResult.body : null;
+      setAlerts(nextAlerts ?? null);
     } catch (e) {
       if (!c.signal.aborted)
         setError(
@@ -129,9 +155,13 @@ function App() {
       })
     : [];
   const fresh = !!data && coverageProblems.length === 0;
+  const alertProblems = (alerts?.open ?? []).filter(
+    (item) => item.severity !== "info",
+  ).length;
   const attention = Math.max(
     data?.metrics.attention ?? 0,
     coverageProblems.length,
+    alertProblems,
   );
   const scope = data?.window.label || "Last hour";
   if (needsLogin)
@@ -249,6 +279,13 @@ function App() {
           >
             <ShieldCheck />
             Coverage
+          </button>
+          <button
+            className={"nav-alerts" + (drawer === "Alerts" ? " active" : "")}
+            onClick={() => open("Alerts")}
+          >
+            <Bell />
+            Alerts
           </button>
         </nav>
         <div className="sidebar-bottom">
@@ -383,7 +420,7 @@ function App() {
               </button>
               <button
                 className={"metric " + (attention ? "gold" : "green")}
-                onClick={() => open("Coverage")}
+                onClick={() => open("Alerts")}
               >
                 <span className="metric-icon">
                   <ShieldCheck />
@@ -399,6 +436,58 @@ function App() {
                 </div>
                 <ChevronRight className="card-arrow" size={16} />
               </button>
+            </section>
+            <section className="alerts-panel" aria-label="Alerts">
+              <div className="alerts-heading">
+                <h2>Alerts</h2>
+                {alerts?.illustrative && <span>Illustrative</span>}
+                {alerts?.checker === "silent" && <span>Checker silent</span>}
+                {alerts?.checker === "unknown" && (
+                  <span>Checker status unknown</span>
+                )}
+                <button className="text-button" onClick={() => open("Alerts")}>
+                  All <ChevronRight size={14} />
+                </button>
+              </div>
+              {!alerts ? (
+                <p className="muted">Alert status is unavailable.</p>
+              ) : alerts.open.length ? (
+                alerts.open.slice(0, 3).map((item) => (
+                  <article className="alerts-row" key={item.fingerprint}>
+                    <span className={"sev sev-" + item.severity}>
+                      {item.severity}
+                    </span>
+                    <span className="alerts-rule">{item.rule}</span>
+                    <span className="alerts-subject">{item.subject}</span>
+                    <span className="alerts-age">
+                      {duration(item.age_seconds)}
+                    </span>
+                    <span className="alerts-summary">{item.summary}</span>
+                  </article>
+                ))
+              ) : (
+                <p className="muted">No open alerts</p>
+              )}
+              {!!alerts?.resolved.length && (
+                <details className="alerts-resolved">
+                  <summary>
+                    Recently resolved ({alerts.resolved.length})
+                  </summary>
+                  {alerts.resolved.slice(0, 3).map((item) => (
+                    <article className="alerts-row" key={item.fingerprint}>
+                      <span className={"sev sev-" + item.severity}>
+                        {item.severity}
+                      </span>
+                      <span className="alerts-rule">{item.rule}</span>
+                      <span className="alerts-subject">{item.subject}</span>
+                      <span className="alerts-age">
+                        {duration(item.age_seconds)}
+                      </span>
+                      <span className="alerts-summary">{item.summary}</span>
+                    </article>
+                  ))}
+                </details>
+              )}
             </section>
             <WorldView
               data={data}
@@ -546,6 +635,81 @@ function App() {
           </div>
           {data && (
             <>
+              {drawer === "Alerts" && (
+                <>
+                  <p>
+                    Open alerts from the checker, plus alerts that resolved in
+                    the last day. Info stays on this console. Warning and
+                    critical alerts can also notify the configured assistant.
+                  </p>
+                  {alerts?.illustrative && (
+                    <p className="muted">
+                      Illustrative demo alerts. They are not live telemetry.
+                    </p>
+                  )}
+                  {alerts?.checker === "silent" && (
+                    <p>
+                      The alert checker heartbeat is missing or stale, so a
+                      silence alert is shown here.
+                    </p>
+                  )}
+                  {alerts?.checker === "unknown" && (
+                    <p>
+                      The checker heartbeat could not be read. Existing alerts
+                      are still listed.
+                    </p>
+                  )}
+                  {!alerts ? (
+                    <p>Alert status is unavailable.</p>
+                  ) : (
+                    <>
+                      <h3>Open</h3>
+                      {alerts.open.length ? (
+                        alerts.open.map((item) => (
+                          <div className="detail-card" key={item.fingerprint}>
+                            <Bell />
+                            <div>
+                              <strong>
+                                {item.severity} · {item.rule}
+                              </strong>
+                              <p>
+                                {item.subject} · {item.summary}
+                              </p>
+                              <small>
+                                Open {duration(item.age_seconds)} ·{" "}
+                                {item.evidence_query}
+                              </small>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p>No open alerts</p>
+                      )}
+                      <h3>Recently resolved</h3>
+                      {alerts.resolved.length ? (
+                        alerts.resolved.map((item) => (
+                          <div className="detail-card" key={item.fingerprint}>
+                            <Bell />
+                            <div>
+                              <strong>
+                                {item.severity} · {item.rule}
+                              </strong>
+                              <p>
+                                {item.subject} · {item.summary}
+                              </p>
+                              <small>
+                                Resolved {duration(item.age_seconds)}
+                              </small>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="muted">None in the last day.</p>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
               {drawer === "Devices" && (
                 <>
                   <p className="muted">

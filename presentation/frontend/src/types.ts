@@ -23,6 +23,28 @@ export type Device = {
   attachment: string;
   observed_at: string;
 };
+export type AlertItem = {
+  fingerprint: string;
+  rule: string;
+  severity: "info" | "warning" | "critical";
+  state: "firing" | "resolved";
+  subject: string;
+  summary: string;
+  first_seen: string;
+  last_seen: string;
+  age_seconds: number;
+  evidence_query: string;
+};
+
+export type Alerts = {
+  mode: "demo" | "live";
+  as_of: string;
+  checker: "ok" | "silent" | "unknown";
+  illustrative: boolean;
+  open: AlertItem[];
+  resolved: AlertItem[];
+};
+
 export type Overview = {
   mode: "demo" | "live";
   as_of: string;
