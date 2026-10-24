@@ -16,7 +16,7 @@ is not part of alerting.
 | --- | --- |
 | Install the insert-only vmauth user | None, if vmauth reloads `auth.yaml`. Recreate **only** `api` if the new user is still rejected. |
 | Start the checker | **New** `alerter` container only. `logs`, `flows`, `telemetry`, and `api` stay up. |
-| Show alerts on the console | Recreate **only** `visibility-presentation-console-1`. `:8096` drops while that container restarts. Collectors and the API stay up. |
+| Show alerts on the console | Build `visibility-console:0.2.0` from the checkout first (no container restart). Then recreate **only** `visibility-presentation-console-1`. `:8096` drops while that container restarts. Collectors and the API stay up. |
 | Synthetic dry-run | Stop and start **only** `alerter`. |
 
 Do not use `docker compose down --volumes`. Do not rotate the operator token.
@@ -159,14 +159,34 @@ docker compose ps alerter
 `telemetry`, or `api`. The service has no `depends_on`, so it still runs when
 those containers are down and reports them.
 
-Rebuild the console and recreate only that container. The live Compose file is
-outside Git; point `-f` at it. The image tag in `compose.presentation.yaml` is
-`visibility-console:0.2.0`. Health reports version `0.2.0`.
+Build `visibility-console:0.2.0` from the checkout. The source is the
+`presentation/` directory next to `compose.presentation.yaml` (Dockerfile,
+`backend/`, `frontend/`, and `requirements*.txt`). That tree is not in
+`presentation-deploy/`. This build does not start or recreate a container and
+does not read live credentials.
+
+```bash
+cd /home/klab/codex/Visibility
+docker compose -f compose.presentation.yaml build console
+```
+
+`presentation-deploy/compose.build.yaml` is the same build with the checkout
+path set for AI-02. The host file
+`/home/klab/.local/share/visibility/presentation-deploy/compose.live.yaml` is
+not in Git. It has no `build:` key, so `up --build` on that file does not
+compile an image. The running console was produced by building this tag, then
+pointing that file's image line at `visibility-console:0.2.0`. The previous
+live image, and the rollback tag, is
+`visibility-console:layout-19604db9bdbf`.
+
+Change only that image line, then recreate the console. Do not pass `--build`
+and do not replace the host file with the checked-in build file; the host file
+keeps the live mounts.
 
 ```bash
 docker compose -p visibility-presentation \
   -f /home/klab/.local/share/visibility/presentation-deploy/compose.live.yaml \
-  up -d --build --no-deps --pull never console
+  up -d --no-deps --pull never console
 ```
 
 `:8096` is briefly unavailable. Confirm `GET /api/health` version `0.2.0` and
@@ -220,10 +240,13 @@ fingerprints.
 docker compose stop alerter
 ```
 
-To remove the panel, recreate the console from `visibility-console:0.1.0`.
-Only that container restarts. While the new panel is still deployed and the
-checker is stopped, the console shows `checker-silent` once the last heartbeat
-is older than 180 seconds.
+To remove the panel, set the host compose image back to
+`visibility-console:layout-19604db9bdbf` and run the same console `up` command
+without `--build`. That is the image that was live before `0.2.0`. The demo
+compose tag `visibility-console:0.1.0` was not that deployment. Only the
+console container restarts. While this panel is still deployed and the checker
+is stopped, the console shows `checker-silent` once the last heartbeat is
+older than 180 seconds.
 
 Removing `alert-inserter` from `auth.yaml` is optional. Do not edit the
 operator user while doing it. vmauth reloads the file; recreate `api` only if

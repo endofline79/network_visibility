@@ -70,7 +70,7 @@ Observation highlights key off canonical area IDs and newer flow-end timestamps.
 
 ## Preview and verification
 
-Default mode is a clearly labelled synthetic demo; live data is never replaced by demo fixtures. Build with `npm --prefix frontend run build`, serve `backend.app:app` on loopback, and use the existing Python requirements. Map assets come from the already pinned `@d3-maps/atlas`, d3-geo and topojson-client dependencies. See THIRD_PARTY.md and the bundled atlas license.
+Default mode is a clearly labelled synthetic demo; live data is never replaced by demo fixtures. From the repository root, `docker compose -f compose.presentation.yaml build console` builds `visibility-console:0.2.0` using this directory as the Docker context. The live host Compose file does not contain that build. Build the frontend for a local preview with `npm --prefix frontend run build`, serve `backend.app:app` on loopback, and use the existing Python requirements. Map assets come from the already pinned `@d3-maps/atlas`, d3-geo and topojson-client dependencies. See THIRD_PARTY.md and the bundled atlas license.
 
 From the repository root, prepare an isolated local environment (Python 3.12+
 and Node.js 22):

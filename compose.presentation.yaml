@@ -1,9 +1,14 @@
+# Loopback demo. `docker compose -f compose.presentation.yaml build console`
+# from this directory tags visibility-console:0.2.0 from ./presentation.
+# The live file under presentation-deploy/ has no build context; do not expect
+# `up --build` on that file to compile this image.
 name: visibility-presentation
 services:
   console:
     image: visibility-console:0.2.0
     build:
       context: ./presentation
+      dockerfile: Dockerfile
     restart: "no"
     environment:
       PRESENTATION_MODE: demo

@@ -14,8 +14,12 @@ The console was deployed on October 12. See the
 [layout release](docs/layout-release-2026-10-12.md) and
 [certificate review](docs/dashboard-certificate-review-2026-10-12.md).
 Its default [Compose configuration](compose.presentation.yaml) is a loopback-only
-synthetic demo (`visibility-console:0.2.0`). Live deployment settings and
-credentials remain outside Git.
+synthetic demo. From the checkout, `docker compose -f compose.presentation.yaml build console`
+builds and tags `visibility-console:0.2.0` from `presentation/`. The live
+Compose file is on the host, not in Git; it references that tag and does not
+build it. See [presentation-deploy](presentation-deploy/README.md). Live
+settings and credentials remain outside Git. The previous live image is
+`visibility-console:layout-19604db9bdbf`.
 
 The legacy dashboard and Jev process were stopped on 2026-09-24. Port 8095
 stays with the `legacy-ui` profile and is not the current console. The
