@@ -531,3 +531,42 @@ or live service changes were made as part of repository setup.
   `test_jev_stream`) could not import because local Python lacks `fastapi`.
   The complete dashboard suite remains unverified in this environment; see
   the README for dependency installation and test commands.
+
+## Presentation source publication review — 2026-10-24
+
+Reviewed the previously untracked `presentation/` app, demo Compose definition,
+and five October maintenance/deployment documents for publication on `main`.
+The operational records retain their original dates and describe prior work;
+this review did not deploy the app or revalidate the live homelab.
+
+- Reviewed authentication, fixed-origin TLS transport, query bounds, location
+  aggregation, frontend data handling, and the proposed source/docs. A limited
+  credential-pattern scan found no production credentials in the proposed files;
+  this is not a comprehensive security audit. Synthetic authentication fixtures
+  are explicitly labelled in the security tests.
+- Excluded generated browser artifacts and local test environments from Git and
+  the Docker build context. Existing runtime state, captures, credentials and
+  private deployment files remain ignored and local.
+- Replaced workstation-specific browser-test paths with `PLAYWRIGHT_MODULE`,
+  optional `CHROMIUM_EXECUTABLE`, and a consistent loopback demo URL. Each map
+  suite creates its artifact directory, so it can run from a clean checkout.
+  Added reproducible setup/test commands to the presentation README.
+- Updated the root README to distinguish the newer presentation app from the
+  legacy dashboard; clarified the capture NIC document's historical scope.
+  Corrected the presentation footer's retired NASA imagery credit to Natural
+  Earth, matching the bundled vector map and retained license.
+- All 70 presentation Python tests passed under Python 3.14.4, including live
+  authentication, secure cookies, logout, read-only API guards, and query
+  transport failure handling. The six history/timestamp checks also passed.
+- TypeScript checking, Vite production build, frontend formatting and demo
+  Compose validation passed. `npm audit --omit=dev --audit-level=high` reported
+  zero vulnerabilities at review time.
+- All eight browser suites passed using Playwright 1.60.0 and isolated headless
+  Chromium against a temporary loopback synthetic demo: dashboard, coverage,
+  initial map, map interaction, refresh, location quality, marker press and
+  performance. The performance run observed roughly ten-second polling and a
+  maximum two-frame pan measurement of 51 ms. The temporary server was stopped.
+- The container image was not rebuilt, and the separate historical SSH smoke
+  test was not run. No production credentials, collectors, services, network
+  rules or deployment configuration were changed. The test client emitted an
+  existing `httpx` deprecation warning; all assertions passed.

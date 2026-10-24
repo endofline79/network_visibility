@@ -1,0 +1,27 @@
+name: visibility-presentation
+services:
+  console:
+    image: visibility-console:0.1.0
+    build:
+      context: ./presentation
+    restart: "no"
+    environment:
+      PRESENTATION_MODE: demo
+    ports:
+      - "127.0.0.1:8096:8096"
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cpus: 1.0
+    mem_limit: 512m
+    memswap_limit: 512m
+    pids_limit: 64
+    stop_grace_period: 15s
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "2"

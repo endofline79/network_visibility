@@ -1,11 +1,17 @@
 # Homelab visibility
 
-## Current deployment: headless telemetry
+## Telemetry API and presentation
 
-As of 2026-09-24, the custom UI and Jev process are stopped. Use the
+The legacy dashboard and Jev process were stopped on 2026-09-24. Use the
 **HTTPS native API at https://192.168.5.230:9429** with the Phase token and
 the global `homelab-telemetry` skill. See [API, collection, and rollback operations](docs/headless-telemetry.md).
-The dashboard descriptions below document the retained legacy UI, not an active service.
+The newer read-only [presentation app](presentation/README.md) was deployed at
+**https://192.168.5.230:8096/** on October 12; see the dated
+[layout release](docs/layout-release-2026-10-12.md) and
+[certificate review](docs/dashboard-certificate-review-2026-10-12.md).
+Its default [Compose configuration](compose.presentation.yaml) is a loopback-only
+synthetic demo. Live deployment settings and credentials remain outside Git.
+The dashboard descriptions below document the retained legacy UI.
 
 ## Retained legacy dashboard
 
@@ -79,6 +85,9 @@ collected data, then commit and push to the intended branch. Git pushes publish
 source only; they do not deploy or restart services.
 
 ### Local validation
+
+For the presentation app, use its [setup and test commands](presentation/README.md#preview-and-verification).
+Generated browser artifacts and local test environments are excluded from Git.
 
 The standard-library tests can run without contacting the homelab:
 
