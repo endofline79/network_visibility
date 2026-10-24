@@ -1,4 +1,4 @@
-# Builds visibility-console:0.2.0 from the git checkout's presentation tree.
+# Builds visibility-console:0.3.0 from the git checkout's presentation tree.
 # This is not the live Compose file. The file on AI-02,
 # /home/klab/.local/share/visibility/presentation-deploy/compose.live.yaml,
 # keeps the live ports, mounts, and credentials and is not stored here.
@@ -6,7 +6,7 @@
 name: visibility-presentation
 services:
   console:
-    image: visibility-console:0.2.0
+    image: visibility-console:0.3.0
     build:
       context: ${PRESENTATION_SOURCE:-/home/klab/codex/Visibility/presentation}
       dockerfile: Dockerfile

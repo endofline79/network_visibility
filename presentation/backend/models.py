@@ -48,3 +48,25 @@ class GlobeSnapshot(Model):
     state:Literal['fresh','stale','partial','unavailable'];observed_at:str|None
     endpoints:int|None;countries:list[LiveCountry];locations:list[Location]=[]
     geo:Geo;note:str
+class Freshness(Model):
+    id:str;title:str;state:Literal['fresh','info','warning','critical','unavailable']
+    observed_at:str|None;age_seconds:int|None;note:str
+class Talker(Model):
+    ip:str;bytes:int
+class Talkers(Model):
+    state:Literal['available','unavailable','partial'];rows:list[Talker];note:str
+class BlockRow(Model):
+    interface:str;source:str;destination:str;destination_port:int|None;protocol:str;count:int
+class Blocks(Model):
+    state:Literal['available','unavailable','partial'];rows:list[BlockRow];unparsed:int;note:str
+class DnsName(Model):
+    name:str;queries:int
+class DnsClient(Model):
+    ip:str;name:str;queries:int
+class DnsPanel(Model):
+    state:Literal['available','unavailable','partial'];domains:list[DnsName];clients:list[DnsClient];note:str
+class GatewayStatus(Model):
+    state:Literal['up','down','unknown','unavailable'];observed_at:str|None;summary:str;sample:str
+class OpsHome(Model):
+    mode:Literal['demo','live'];illustrative:bool;as_of:str;window:Window;freshness:list[Freshness]
+    talkers:Talkers;blocks:Blocks;dns:DnsPanel;gateway:GatewayStatus;notes:list[str]

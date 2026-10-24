@@ -4,6 +4,23 @@ A read-only presentation of existing Visibility telemetry. The map extends prese
 
 `GET /api/alerts` lists open alerts and alerts resolved in the last day. Demo mode returns labelled illustrative alerts. The desktop workspace shows a short Alerts strip above the map; narrower windows keep that strip out of the fixed layout and open the same list from **Alerts** or **Needs attention**. The console does not write alerts or call the webhook.
 
+## Ops Home
+
+**Ops** in the left navigation opens the daily operations page. The map, the other navigation entries, and the Alerts drawer stay as they are.
+
+The page is one scrollable workspace, including at a narrow phone width:
+
+- **Source freshness** is the last-seen age for firewall logs, NetFlow, UniFi inventory, Pi-hole DNS, the Pi-hole summary, the OPNsense syslog family, and the alert-checker heartbeat. Warning and critical follow the checker, about 15 minutes and about 30 minutes. The heartbeat tile is critical after 3 minutes, the same limit as checker silence.
+- **Open alerts** is the existing `/api/alerts` list. **All alerts** opens the same Alerts drawer. There is no second alert model.
+- **Top LAN talkers** ranks egress-only NetFlow schema 2 bytes for the selected window. `event_id` is deduplicated before bytes are summed. A configured LAN source is credited; otherwise a LAN destination is. Post-NAT WAN uploads are not assigned to a client. The ranges stay in the backend network list and are not hard-coded in the frontend.
+- **Top firewall blocks** groups the newest logged `filterlog` lines by interface, source, destination, destination port, and protocol. The read is capped.
+- **Top DNS** ranks Pi-hole domains and clients after `event_id` deduplication.
+- **WAN gateway** is the newest OPNsense `dpinger` line from the last 30 minutes, plus any open `gateway-down` or `wan-ingress` alert. The page does not send a probe.
+
+The labelled window is **Last 15 minutes** or **Last hour**. A 24 hour flow ranking is not offered, because a long `stats by (event_id)` can exhaust VictoriaLogs memory. `GET /api/ops` runs the reads on the server through the existing query client. Demo mode labels the panels as illustrative. Live mode does not fill a failed read with demo data. An unauthenticated live request is rejected like the other API routes.
+
+Deploy is a console image rebuild only, the same pattern as the alerting console. From the repository root, `docker compose -f compose.presentation.yaml build console` tags `visibility-console:0.3.0`. Recreate only the presentation console after the image exists. Roll this page back by pointing the host compose file at `visibility-console:0.2.0`. Collectors and VictoriaLogs stay up.
+
 The globe is replaced by a locally bundled vector world map. Drag pans; accessible buttons and arrow keys pan/zoom, Home fits the world, and zoom is bounded from 100% to 800%. Fit selected country/areas uses the current geographic estimates. Ordinary wheel and vertical touch gestures scroll the relevant pane when it has overflow; the document stays fixed. A visible opt-in toggle enables wheel/pinch zoom and two-dimensional touch pan. Movement, multiple pointers, cancellation and held drags consume selection for the entire gesture. Country filters and area details do not reset the camera on refresh. Reduced motion disables observation highlighting. No third-party tiles, geolocation requests, tracking or external browser requests are required.
 
 ## Map layout
@@ -70,7 +87,7 @@ Observation highlights key off canonical area IDs and newer flow-end timestamps.
 
 ## Preview and verification
 
-Default mode is a clearly labelled synthetic demo; live data is never replaced by demo fixtures. From the repository root, `docker compose -f compose.presentation.yaml build console` builds `visibility-console:0.2.0` using this directory as the Docker context. The live host Compose file does not contain that build. Build the frontend for a local preview with `npm --prefix frontend run build`, serve `backend.app:app` on loopback, and use the existing Python requirements. Map assets come from the already pinned `@d3-maps/atlas`, d3-geo and topojson-client dependencies. See THIRD_PARTY.md and the bundled atlas license.
+Default mode is a clearly labelled synthetic demo; live data is never replaced by demo fixtures. From the repository root, `docker compose -f compose.presentation.yaml build console` builds `visibility-console:0.3.0` using this directory as the Docker context. The live host Compose file does not contain that build. Build the frontend for a local preview with `npm --prefix frontend run build`, serve `backend.app:app` on loopback, and use the existing Python requirements. Map assets come from the already pinned `@d3-maps/atlas`, d3-geo and topojson-client dependencies. See THIRD_PARTY.md and the bundled atlas license.
 
 From the repository root, prepare an isolated local environment (Python 3.12+
 and Node.js 22):
@@ -100,7 +117,7 @@ npm install --prefix .browser-qa --no-save --package-lock=false playwright@1.60.
 node .browser-qa/node_modules/playwright/cli.js install chromium
 export PLAYWRIGHT_MODULE="$PWD/.browser-qa/node_modules/playwright"
 for suite in browser_qa coverage_qa map_initial_qa map_qa map_refresh_qa \
-  map_quality_qa map_marker_press_qa map_performance; do
+  map_quality_qa map_marker_press_qa map_performance ops_qa; do
   node "tests/$suite.cjs" || exit 1
 done
 ```

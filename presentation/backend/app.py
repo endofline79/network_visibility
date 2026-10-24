@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .demo import demo
-from .models import Overview,GlobeSnapshot,Alerts
+from .models import Overview,GlobeSnapshot,Alerts,OpsHome
 from .auth import Viewer,Login,same_origin
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -50,8 +50,9 @@ def logout(request:Request):
     if not viewer:raise HTTPException(404,'Viewer sign-in is not configured in this demo')
     same_origin(request);request.session.clear()
     return {'authenticated':False}
+VERSION='0.3.0'
 @app.get('/api/health')
-def health():return {'status':'ok','mode':MODE,'version':'0.2.0'}
+def health():return {'status':'ok','mode':MODE,'version':VERSION}
 @app.get('/api/overview',response_model=Overview)
 def overview(window:Literal['15m','1h','24h']='1h',scenario:Literal['normal','stale','unavailable','error']='normal',end:datetime|None=None):
     anchor=end or datetime.now(timezone.utc).replace(second=0,microsecond=0)
@@ -67,6 +68,23 @@ def overview(window:Literal['15m','1h','24h']='1h',scenario:Literal['normal','st
     from .service import service
     try:return service.overview(anchor,seconds)
     except Exception:raise HTTPException(503,'Telemetry cannot be validated right now') from None
+@app.get('/api/ops',response_model=OpsHome)
+def ops_home(window:Literal['15m','1h']='1h',scenario:Literal['normal','stale','unavailable','error']='normal',end:datetime|None=None):
+    anchor=end or datetime.now(timezone.utc).replace(second=0,microsecond=0)
+    if anchor.tzinfo is None:raise HTTPException(422,'A timezone is required')
+    anchor=anchor.astimezone(timezone.utc)
+    if (anchor-datetime.now(timezone.utc)).total_seconds()>60:raise HTTPException(422,'Future windows are unavailable')
+    if (datetime.now(timezone.utc)-anchor).total_seconds()>30*86400:raise HTTPException(422,'Window exceeds retention')
+    seconds={'15m':900,'1h':3600}[window]
+    from . import ops as ops_view
+    if MODE=='demo':
+        if scenario=='error':raise HTTPException(503,'Demo unavailable state')
+        return ops_view.demo_ops(anchor,seconds,scenario)
+    if scenario!='normal':raise HTTPException(422,'Demo scenarios are unavailable in live mode')
+    try:
+        from .service import service
+        return ops_view.live_ops(service.client,anchor,seconds)
+    except Exception:raise HTTPException(503,'Operations view cannot be validated right now') from None
 @app.get('/api/alerts',response_model=Alerts)
 def alerts():
     from . import alerts as alert_view

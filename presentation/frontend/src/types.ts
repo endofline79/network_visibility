@@ -45,6 +45,55 @@ export type Alerts = {
   resolved: AlertItem[];
 };
 
+export type FreshnessState =
+  "fresh" | "info" | "warning" | "critical" | "unavailable";
+
+export type OpsHome = {
+  mode: "demo" | "live";
+  illustrative: boolean;
+  as_of: string;
+  window: { start: string; end: string; seconds: number; label: string };
+  freshness: {
+    id: string;
+    title: string;
+    state: FreshnessState;
+    observed_at: string | null;
+    age_seconds: number | null;
+    note: string;
+  }[];
+  talkers: {
+    state: "available" | "unavailable" | "partial";
+    rows: { ip: string; bytes: number }[];
+    note: string;
+  };
+  blocks: {
+    state: "available" | "unavailable" | "partial";
+    rows: {
+      interface: string;
+      source: string;
+      destination: string;
+      destination_port: number | null;
+      protocol: string;
+      count: number;
+    }[];
+    unparsed: number;
+    note: string;
+  };
+  dns: {
+    state: "available" | "unavailable" | "partial";
+    domains: { name: string; queries: number }[];
+    clients: { ip: string; name: string; queries: number }[];
+    note: string;
+  };
+  gateway: {
+    state: "up" | "down" | "unknown" | "unavailable";
+    observed_at: string | null;
+    summary: string;
+    sample: string;
+  };
+  notes: string[];
+};
+
 export type Overview = {
   mode: "demo" | "live";
   as_of: string;
