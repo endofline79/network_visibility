@@ -21,6 +21,14 @@ The labelled window is **Last 15 minutes** or **Last hour**. A 24 hour flow rank
 
 Deploy is a console image rebuild only, the same pattern as the alerting console. From the repository root, `docker compose -f compose.presentation.yaml build console` tags `visibility-console:0.3.0`. Recreate only the presentation console after the image exists. Roll this page back by pointing the host compose file at `visibility-console:0.2.0`. Collectors and VictoriaLogs stay up.
 
+## IoT and streaming DNS destinations
+
+**Destinations** in the left navigation lists Pi-hole names for the hosts in `config/iot-hosts.yaml`. The flat LAN is not a scope. There is no IoT VLAN, so a client is included only when that file lists its `ip` and the `name` / `dns_names` values Pi-hole stores in `client_name`. The page can show one host or every allowlisted host for the last hour, 24 hours, or 7 days.
+
+`GET /api/destinations` reads `app_name:=pihole-dns` through the existing VictoriaLogs client. The one-hour view deduplicates `event_id`, then counts domains. The 24 hour and 7 day views count stored receipts with `stats by (domain)` and do not group by `event_id`, because a multi-day event-id aggregation can exhaust VictoriaLogs. Each host also reports first and last seen time in the window. Domain rows are grouped by registrable domain (eTLD+1) for the site column. Blocked and allowed lookups both stay in the list. Demo mode labels the counts as illustrative and still uses this allowlist for the host names.
+
+To add a host, edit `config/iot-hosts.yaml` only: a new list item needs `id`, `class` (`iot` or `streaming`), `name`, `dns_names`, `ip`, `mac`, and optional `notes`. Rebuild and recreate the console image as above. The file is copied into the image; no collector or alerter change is required. Keep phones, PCs, and INFRA gear out. MYCAR (192.168.5.149) is a comment at the bottom of the file and is not queried.
+
 The globe is replaced by a locally bundled vector world map. Drag pans; accessible buttons and arrow keys pan/zoom, Home fits the world, and zoom is bounded from 100% to 800%. Fit selected country/areas uses the current geographic estimates. Ordinary wheel and vertical touch gestures scroll the relevant pane when it has overflow; the document stays fixed. A visible opt-in toggle enables wheel/pinch zoom and two-dimensional touch pan. Movement, multiple pointers, cancellation and held drags consume selection for the entire gesture. Country filters and area details do not reset the camera on refresh. Reduced motion disables observation highlighting. No third-party tiles, geolocation requests, tracking or external browser requests are required.
 
 ## Map layout

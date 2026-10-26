@@ -1,0 +1,42 @@
+# IoT and streaming hosts whose Pi-hole destinations the console may show.
+# Source: Pi-hole DNS client names and UniFi client snapshots, 2026-10-26.
+# Scope is this list only. Phones, PCs, and INFRA gear stay off it.
+# The flat 192.168.5.0/24 LAN is not a scope: there is no IoT VLAN.
+#
+# Matching is exact client_ip, plus exact client_name for `name` and each
+# `dns_names` entry. To add a host, append one item under `hosts` (id, class,
+# name, dns_names, ip, mac, optional notes) and rebuild the presentation
+# console. class is `iot` or `streaming`. Do not commit MYCAR until Kevin
+# confirms it; it is a candidate comment at the bottom of this file.
+version: 1
+hosts:
+  - id: roku-premiere
+    class: streaming
+    name: RokuPremiere
+    dns_names: [RokuPremiere.occido.net]
+    ip: 192.168.5.107
+    mac: "d8:31:34:8a:bf:b3"
+    notes: Heavy roku.com + googlevideo DNS
+  - id: living-room
+    class: streaming
+    name: Living-Room
+    dns_names: [Living-Room.occido.net]
+    ip: 192.168.5.142
+    mac: "c0:95:6d:72:de:d6"
+    notes: Apple stack + peacocktv.com
+  - id: ring-113237
+    class: iot
+    name: Ring-113237
+    dns_names: [Ring-113237.occido.net]
+    ip: 192.168.5.116
+    mac: "64:9a:63:11:32:37"
+    notes: ring.com / amazon ring backends
+  - id: sonos-zp
+    class: iot
+    name: SonosZP
+    dns_names: [SonosZP.occido.net]
+    ip: 192.168.5.130
+    mac: "38:42:0b:b6:2e:7a"
+    notes: sonos.com control/metrics
+# candidates_not_in_v1:
+#  - MYCAR 192.168.5.149 mac 74:95:ec:66:44:e0

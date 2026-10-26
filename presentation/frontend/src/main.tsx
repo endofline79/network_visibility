@@ -22,9 +22,15 @@ import {
   Bell,
   Gauge,
 } from "lucide-react";
+import { Destinations } from "./Destinations";
 import { OpsHome } from "./OpsHome";
 import { WorldView } from "./WorldView";
-import type { Alerts, OpsHome as OpsView, Overview } from "./types";
+import type {
+  Alerts,
+  Destinations as DestinationsView,
+  OpsHome as OpsView,
+  Overview,
+} from "./types";
 import "./style.css";
 import "./dashboard.css";
 const count = (v: number | null | undefined) =>
@@ -70,14 +76,22 @@ function App() {
     [drawer, setDrawer] = useState(""),
     [search, setSearch] = useState("");
   const [scenario, setScenario] = useState("normal");
-  const [view, setView] = useState<"home" | "ops">("home");
+  const [view, setView] = useState<"home" | "ops" | "destinations">("home");
   const [ops, setOps] = useState<OpsView | null>(null),
     [opsWindow, setOpsWindow] = useState("1h"),
     [opsError, setOpsError] = useState(""),
     [opsLoading, setOpsLoading] = useState(false);
+  const [destinations, setDestinations] = useState<DestinationsView | null>(
+      null,
+    ),
+    [destWindow, setDestWindow] = useState("24h"),
+    [destHost, setDestHost] = useState("all"),
+    [destError, setDestError] = useState(""),
+    [destLoading, setDestLoading] = useState(false);
   const requireLogin = useCallback(() => setNeedsLogin(true), []);
   const abort = useRef<AbortController | null>(null),
     opsAbort = useRef<AbortController | null>(null),
+    destAbort = useRef<AbortController | null>(null),
     dialog = useRef<HTMLDialogElement>(null),
     opener = useRef<HTMLElement | null>(null);
   const refresh = useCallback(async () => {
@@ -148,6 +162,32 @@ function App() {
       if (!c.signal.aborted) setOpsLoading(false);
     }
   }, [opsWindow, scenario]);
+  const refreshDestinations = useCallback(async () => {
+    destAbort.current?.abort();
+    const c = new AbortController();
+    destAbort.current = c;
+    try {
+      const r = await fetch(
+        `/api/destinations?window=${destWindow}&host=${encodeURIComponent(destHost)}&scenario=${scenario}`,
+        { signal: c.signal, cache: "no-store" },
+      );
+      if (r.status === 401) {
+        setNeedsLogin(true);
+        return;
+      }
+      if (!r.ok) throw Error();
+      setNeedsLogin(false);
+      setDestinations((await r.json()) as DestinationsView);
+      setDestError("");
+    } catch {
+      if (!c.signal.aborted)
+        setDestError(
+          "DNS destinations are unavailable. Your last view is preserved.",
+        );
+    } finally {
+      if (!c.signal.aborted) setDestLoading(false);
+    }
+  }, [destWindow, destHost, scenario]);
   useEffect(() => {
     setLoading(true);
     refresh();
@@ -181,6 +221,23 @@ function App() {
       opsAbort.current?.abort();
     };
   }, [view, refreshOps]);
+  useEffect(() => {
+    if (view !== "destinations") return;
+    setDestLoading(true);
+    refreshDestinations();
+    const id = setInterval(() => {
+      if (!document.hidden) refreshDestinations();
+    }, 30000);
+    const show = () => {
+      if (!document.hidden) refreshDestinations();
+    };
+    document.addEventListener("visibilitychange", show);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", show);
+      destAbort.current?.abort();
+    };
+  }, [view, refreshDestinations]);
   useEffect(() => {
     if (drawer) {
       opener.current = document.activeElement as HTMLElement;
@@ -331,6 +388,16 @@ function App() {
             Ops
           </button>
           <button
+            className={view === "destinations" && !drawer ? "active" : ""}
+            onClick={() => {
+              setView("destinations");
+              setDrawer("");
+            }}
+          >
+            <Radio />
+            Destinations
+          </button>
+          <button
             className={drawer === "Devices" ? "active" : ""}
             onClick={() => open("Devices")}
           >
@@ -402,6 +469,20 @@ function App() {
               refreshOps();
             }}
             onOpenAlerts={() => open("Alerts")}
+          />
+        ) : view === "destinations" ? (
+          <Destinations
+            data={destinations}
+            window={destWindow}
+            host={destHost}
+            loading={destLoading}
+            error={destError}
+            onWindow={setDestWindow}
+            onHost={setDestHost}
+            onRefresh={() => {
+              setDestLoading(true);
+              refreshDestinations();
+            }}
           />
         ) : (
           <>

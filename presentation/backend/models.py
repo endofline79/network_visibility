@@ -1,5 +1,5 @@
 from typing import Literal
-from pydantic import BaseModel,ConfigDict
+from pydantic import BaseModel,ConfigDict,Field
 class Model(BaseModel):
     model_config=ConfigDict(extra='forbid')
 class Source(Model):
@@ -70,3 +70,17 @@ class GatewayStatus(Model):
 class OpsHome(Model):
     mode:Literal['demo','live'];illustrative:bool;as_of:str;window:Window;freshness:list[Freshness]
     talkers:Talkers;blocks:Blocks;dns:DnsPanel;gateway:GatewayStatus;notes:list[str]
+class _Allowlist(Model):
+    model_config=ConfigDict(extra='forbid',populate_by_name=True)
+    id:str
+    device_class:str=Field(alias='class')
+    name:str;dns_names:list[str];ip:str;mac:str;notes:str=''
+class DestinationName(Model):
+    name:str;queries:int
+class DestinationHost(_Allowlist):
+    state:Literal['available','unavailable','partial']
+    queries:int|None;first_seen:str|None;last_seen:str|None
+    domains:list[DestinationName];sites:list[DestinationName];note:str
+class DestinationsView(Model):
+    mode:Literal['demo','live'];illustrative:bool;as_of:str;window:Window;deduped:bool
+    inventory:list[_Allowlist];hosts:list[DestinationHost];notes:list[str]

@@ -9,6 +9,7 @@ WORKDIR /app
 COPY requirements*.txt ./
 RUN pip install --no-cache-dir -r requirements-test.txt
 COPY backend/ backend/
+COPY config/ config/
 COPY tests/ tests/
 RUN python -m unittest discover -s tests -p 'test_*.py' -v
 FROM python:3.12-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e
@@ -17,6 +18,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY --from=test /app/backend/ backend/
+COPY --from=test /app/config/ config/
 COPY --from=frontend /build/dist/ static/
 USER 1000:1000
 EXPOSE 8096
