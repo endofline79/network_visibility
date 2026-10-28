@@ -24,9 +24,17 @@ NOW = datetime(2026, 10, 26, 16, 0, tzinfo=UTC)
 INVENTORY = Path(__file__).resolve().parents[1] / "config" / "iot-hosts.yaml"
 SEED = (
     ("roku-premiere", "streaming", "RokuPremiere", "192.168.5.107", "d8:31:34:8a:bf:b3"),
-    ("living-room", "streaming", "Living-Room", "192.168.5.142", "c0:95:6d:72:de:d6"),
+    ("living-room", "streaming", "Living-Room-Apple-TV", "192.168.5.142", "c0:95:6d:72:de:d6"),
     ("ring-113237", "iot", "Ring-113237", "192.168.5.116", "64:9a:63:11:32:37"),
-    ("sonos-zp", "iot", "SonosZP", "192.168.5.130", "38:42:0b:b6:2e:7a"),
+    ("sonos-zp", "streaming", "SonosZP", "192.168.5.130", "38:42:0b:b6:2e:7a"),
+    ("google-nest-mini", "iot", "Google-Nest-Mini", "192.168.5.129", "f8:0f:f9:4a:c6:e3"),
+    ("samsung-bedroom-tv", "streaming", "Samsung-Bedroom-TV", "192.168.5.134", "c0:48:e6:c0:dd:9b"),
+    ("esp-ca34f5", "iot", "ESP_CA34F5", "192.168.5.113", "68:c6:3a:ca:34:f5"),
+    ("esp-ca2ced", "iot", "ESP_CA2CED", "192.168.5.114", "68:c6:3a:ca:2c:ed"),
+)
+HELD_BACK = (
+    "192.168.5.149", "192.168.5.119", "192.168.5.131", "192.168.5.105",
+    "192.168.5.108", "192.168.5.127", "192.168.5.145", "192.168.5.133",
 )
 
 
@@ -37,18 +45,32 @@ def write_inventory(directory, body):
 
 
 class InventoryLoad(unittest.TestCase):
-    def test_checked_in_seed_is_the_four_hosts_and_mycar_stays_a_comment(self):
+    def test_checked_in_allowlist_and_held_back_devices_stay_comments(self):
         inventory = load_inventory(INVENTORY)
         self.assertEqual(
             [(host.id, host.device_class, host.name, host.ip, host.mac) for host in inventory.hosts],
             list(SEED),
         )
         self.assertEqual(inventory.hosts[0].dns_names, ("RokuPremiere.occido.net",))
-        self.assertEqual(inventory.hosts[3].dns_names, ("SonosZP.occido.net",))
+        living = inventory.by_id("living-room")
+        self.assertEqual(living.dns_names, ("Living-Room.occido.net", "Living-Room"))
+        self.assertIn("Apple TV", living.notes)
+        self.assertEqual(inventory.by_id("sonos-zp").device_class, "streaming")
+        self.assertEqual(inventory.by_id("google-nest-mini").dns_names, ("Google-Nest-Mini.occido.net",))
+        esp_notes = [inventory.by_id(host_id).notes for host_id in ("esp-ca34f5", "esp-ca2ced")]
+        self.assertEqual(esp_notes[0], esp_notes[1])
+        self.assertIn("Tuya/Smart Life", esp_notes[0])
+        self.assertIn("front-door light switch", esp_notes[0])
+        self.assertIn("unconfirmed", esp_notes[0])
+        self.assertNotIn("192.168.5.113 is", esp_notes[0])
+        self.assertNotIn("192.168.5.114 is", esp_notes[0])
         text = INVENTORY.read_text(encoding="utf-8")
+        active = {host.ip for host in inventory.hosts}
+        for ip in HELD_BACK:
+            self.assertIn(ip, text)
+            self.assertNotIn(ip, active)
         self.assertIn("MYCAR", text)
-        self.assertIn("192.168.5.149", text)
-        self.assertNotIn("192.168.5.149", [host.ip for host in inventory.hosts])
+        self.assertIn("BLN4N74", text)
         self.assertNotIn("mycar", [host.id for host in inventory.hosts])
 
     def test_rejects_injection_and_scope_mistakes(self):
@@ -105,7 +127,7 @@ hosts:
         inventory = load_inventory(path)
         self.assertEqual(inventory.hosts[-1].id, "extra-cam")
         queries = destination_queries(NOW - timedelta(days=7), NOW, inventory.hosts, False)
-        self.assertEqual(len(queries), 10)
+        self.assertEqual(len(queries), 18)
         blob = "\n".join(queries.values())
         self.assertIn('client_ip:="192.168.5.180"', blob)
         self.assertIn('client_name:="ExtraCam"', blob)
@@ -147,7 +169,7 @@ class QueryShape(unittest.TestCase):
             queries = destination_queries(
                 NOW - timedelta(seconds=seconds), NOW, self.inventory.hosts, False,
             )
-            self.assertEqual(len(queries), 8)
+            self.assertEqual(len(queries), 16)
             for query in queries.values():
                 self.assertIn("app_name:=pihole-dns", query)
                 self.assertNotIn("event_id", query)
@@ -224,7 +246,7 @@ class QueryShape(unittest.TestCase):
         DestinationsView.model_validate(view)
         self.assertEqual(view["mode"], "live")
         self.assertFalse(view["deduped"])
-        self.assertEqual(len(client.queries), 8)
+        self.assertEqual(len(client.queries), 16)
         self.assertTrue(all("event_id" not in query for query in client.queries))
         self.assertTrue(all("192.168.5.149" not in query for query in client.queries))
         roku = view["hosts"][0]
@@ -236,7 +258,7 @@ class QueryShape(unittest.TestCase):
         one = live_destinations(Client(), self.inventory, NOW, 3600, "roku-premiere", NOW)
         self.assertTrue(one["deduped"])
         self.assertEqual(one["hosts"][0]["queries"], 6)
-        self.assertEqual(len(one["inventory"]), 4)
+        self.assertEqual(len(one["inventory"]), 8)
 
         class Down:
             def query(self, query, deadline):
@@ -272,7 +294,7 @@ class Route(unittest.TestCase):
         self.assertFalse(week["deduped"])
         one = self.client.get("/api/destinations?host=ring-113237").json()
         self.assertEqual([host["id"] for host in one["hosts"]], ["ring-113237"])
-        self.assertEqual(len(one["inventory"]), 4)
+        self.assertEqual(len(one["inventory"]), 8)
         self.assertEqual(one["hosts"][0]["sites"][0]["name"], "ring.com")
         self.assertEqual(self.client.get("/api/destinations?window=15m").status_code, 422)
         self.assertEqual(self.client.get("/api/destinations?host=mycar").status_code, 404)

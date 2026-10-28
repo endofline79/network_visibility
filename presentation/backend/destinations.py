@@ -51,6 +51,16 @@ _DEMO = {
         ("msmetrics.ws.sonos.com", 11),
         ("sonos.com", 3),
     ),
+    "google-nest-mini": (
+        ("google.com", 6),
+        ("nest.com", 2),
+    ),
+    "samsung-bedroom-tv": (
+        ("samsung.com", 5),
+        ("samsungcloudsolution.com", 3),
+    ),
+    "esp-ca34f5": (("mq.gw.tuyaus.com", 4),),
+    "esp-ca2ced": (("mq.gw.tuyaus.com", 3),),
 }
 
 

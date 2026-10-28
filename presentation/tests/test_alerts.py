@@ -105,7 +105,7 @@ class Route(unittest.TestCase):
         self.assertEqual(body["mode"], "demo")
         self.assertTrue(body["illustrative"])
         self.assertEqual(self.client.post("/api/alerts", json={}).status_code, 405)
-        self.assertEqual(self.client.get("/api/health").json()["version"], "0.3.0")
+        self.assertEqual(self.client.get("/api/health").json()["version"], "0.4.1")
 
     def test_live_query_failure_is_503(self):
         with patch("backend.alerts.live_alerts", side_effect=QueryError("down")), patch("backend.app.MODE", "live"):

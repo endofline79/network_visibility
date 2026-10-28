@@ -50,7 +50,7 @@ def logout(request:Request):
     if not viewer:raise HTTPException(404,'Viewer sign-in is not configured in this demo')
     same_origin(request);request.session.clear()
     return {'authenticated':False}
-VERSION='0.3.0'
+VERSION='0.4.1'
 @app.get('/api/health')
 def health():return {'status':'ok','mode':MODE,'version':VERSION}
 @app.get('/api/overview',response_model=Overview)
