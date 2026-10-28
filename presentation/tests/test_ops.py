@@ -272,7 +272,7 @@ class Route(unittest.TestCase):
         self.assertEqual(self.client.get("/api/ops?window=15m").json()["window"]["seconds"], 900)
         self.assertEqual(self.client.get("/api/ops?window=24h").status_code, 422)
         self.assertEqual(self.client.post("/api/ops", json={}).status_code, 405)
-        self.assertEqual(self.client.get("/api/health").json()["version"], "0.4.1")
+        self.assertEqual(self.client.get("/api/health").json()["version"], "0.4.2")
         stale = self.client.get("/api/ops?scenario=stale").json()
         self.assertTrue(all(item["state"] == "critical" for item in stale["freshness"]))
         self.assertEqual(stale["gateway"]["state"], "unknown")

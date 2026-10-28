@@ -61,6 +61,7 @@ _DEMO = {
     ),
     "esp-ca34f5": (("mq.gw.tuyaus.com", 4),),
     "esp-ca2ced": (("mq.gw.tuyaus.com", 3),),
+    "honeywell-thermostat": (("resideo.com", 2),),
 }
 
 

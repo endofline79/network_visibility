@@ -66,6 +66,13 @@ hosts:
     ip: 192.168.5.114
     mac: "68:c6:3a:ca:2c:ed"
     notes: Tuya/Smart Life. One of this pair is the front-door light switch; MAC mapping is unconfirmed. The other is an unidentified sibling.
+  - id: honeywell-thermostat
+    class: iot
+    name: Honeywell-Thermostat
+    dns_names: [Gateway3164F5.occido.net, Gateway3164F5]
+    ip: 192.168.5.133
+    mac: "48:a2:e6:31:64:f5"
+    notes: Honeywell/Resideo home thermostat. Little or no Pi-hole DNS. Azure keepalives. Phone app hits resideo.com.
 # candidates_not_in_v1:
 #   - MYCAR 192.168.5.149 mac 74:95:ec:66:44:e0 (unconfirmed, out of v1)
 #   - Kevin iPhone 192.168.5.119
@@ -74,4 +81,3 @@ hosts:
 #   - Leslie iPad 192.168.5.108
 #   - Leslie printer HP22D620 192.168.5.127 mac 28:c5:c8:22:d6:20
 #   - Leslie's URMC work laptop BLN4N74 192.168.5.145 mac 80:c0:1e:38:32:36 (Kevin confirmed; corporate AD traffic; comment only, not an allowlist host)
-#   - Gateway3164F5 192.168.5.133 mac 48:a2:e6:31:64:f5 (unidentified, quiet)
