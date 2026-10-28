@@ -70,7 +70,7 @@ class InventoryLoad(unittest.TestCase):
             self.assertIn(ip, text)
             self.assertNotIn(ip, active)
         self.assertIn("MYCAR", text)
-        self.assertIn("BLN4N74", text)
+        self.assertIn("Leslie's URMC work laptop BLN4N74", text)
         self.assertNotIn("mycar", [host.id for host in inventory.hosts])
 
     def test_rejects_injection_and_scope_mistakes(self):

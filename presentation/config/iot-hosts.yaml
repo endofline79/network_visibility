@@ -73,5 +73,5 @@ hosts:
 #   - Leslie Apple Watch 192.168.5.105
 #   - Leslie iPad 192.168.5.108
 #   - Leslie printer HP22D620 192.168.5.127 mac 28:c5:c8:22:d6:20
-#   - URMC work laptop BLN4N74 192.168.5.145 mac 80:c0:1e:38:32:36 (corporate AD traffic)
+#   - Leslie's URMC work laptop BLN4N74 192.168.5.145 mac 80:c0:1e:38:32:36 (Kevin confirmed; corporate AD traffic; comment only, not an allowlist host)
 #   - Gateway3164F5 192.168.5.133 mac 48:a2:e6:31:64:f5 (unidentified, quiet)
