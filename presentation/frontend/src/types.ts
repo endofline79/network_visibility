@@ -94,6 +94,42 @@ export type OpsHome = {
   notes: string[];
 };
 
+export type AllowlistedHost = {
+  id: string;
+  class: string;
+  name: string;
+  dns_names: string[];
+  ip: string;
+  mac: string;
+  notes: string;
+};
+
+export type DestinationCount = {
+  name: string;
+  queries: number;
+};
+
+export type DestinationHost = AllowlistedHost & {
+  state: "available" | "unavailable" | "partial";
+  queries: number | null;
+  first_seen: string | null;
+  last_seen: string | null;
+  domains: DestinationCount[];
+  sites: DestinationCount[];
+  note: string;
+};
+
+export type Destinations = {
+  mode: "demo" | "live";
+  illustrative: boolean;
+  as_of: string;
+  window: { start: string; end: string; seconds: number; label: string };
+  deduped: boolean;
+  inventory: AllowlistedHost[];
+  hosts: DestinationHost[];
+  notes: string[];
+};
+
 export type Overview = {
   mode: "demo" | "live";
   as_of: string;

@@ -4,7 +4,7 @@
 
 Open the read-only presentation console at
 **[https://192.168.5.230:8096/](https://192.168.5.230:8096/)**.
-It shows the current network view, the alerting panel, and Ops Home. The HTTPS telemetry
+It shows the current network view, the alerting panel, Ops Home, and DNS destinations for the IoT and streaming allowlist in [presentation/config/iot-hosts.yaml](presentation/config/iot-hosts.yaml). Adding a host is a YAML edit; the console image still has to be rebuilt before that host is queried. The flat LAN is not used as a scope. The HTTPS telemetry
 API is at **[https://192.168.5.230:9429](https://192.168.5.230:9429)**. Use it
 with the Phase token and the global `homelab-telemetry` skill. See
 [API, collection, and rollback operations](docs/headless-telemetry.md) and

@@ -1,0 +1,83 @@
+# IoT and streaming hosts whose Pi-hole destinations the console may show.
+# Source: Pi-hole DNS client names, UniFi client snapshots, and Kevin's
+# device tags (2026-10-28).
+# Scope is this list only. Phones, PCs, printers, and INFRA gear stay off it.
+# The flat 192.168.5.0/24 LAN is not a scope: there is no IoT VLAN.
+#
+# Matching is exact client_ip, plus exact client_name for `name` and each
+# `dns_names` entry. To add a host, append one item under `hosts` (id, class,
+# name, dns_names, ip, mac, optional notes) and rebuild the presentation
+# console. class is `iot` or `streaming`.
+version: 1
+hosts:
+  - id: roku-premiere
+    class: streaming
+    name: RokuPremiere
+    dns_names: [RokuPremiere.occido.net]
+    ip: 192.168.5.107
+    mac: "d8:31:34:8a:bf:b3"
+    notes: Yoga room Roku. Heavy roku.com and googlevideo DNS
+  - id: living-room
+    class: streaming
+    name: Living-Room-Apple-TV
+    dns_names: [Living-Room.occido.net, Living-Room]
+    ip: 192.168.5.142
+    mac: "c0:95:6d:72:de:d6"
+    notes: Living room Apple TV. Apple stack and peacocktv.com
+  - id: ring-113237
+    class: iot
+    name: Ring-113237
+    dns_names: [Ring-113237.occido.net]
+    ip: 192.168.5.116
+    mac: "64:9a:63:11:32:37"
+    notes: Front door Ring. ring.com and Amazon Ring backends
+  - id: sonos-zp
+    class: streaming
+    name: SonosZP
+    dns_names: [SonosZP.occido.net]
+    ip: 192.168.5.130
+    mac: "38:42:0b:b6:2e:7a"
+    notes: Living room sound bar. sonos.com control and metrics
+  - id: google-nest-mini
+    class: iot
+    name: Google-Nest-Mini
+    dns_names: [Google-Nest-Mini.occido.net]
+    ip: 192.168.5.129
+    mac: "f8:0f:f9:4a:c6:e3"
+    notes: Kitchen Nest Mini
+  - id: samsung-bedroom-tv
+    class: streaming
+    name: Samsung-Bedroom-TV
+    dns_names: [Samsung-Bedroom-TV.occido.net]
+    ip: 192.168.5.134
+    mac: "c0:48:e6:c0:dd:9b"
+    notes: Bedroom Samsung TV
+  - id: esp-ca34f5
+    class: iot
+    name: ESP_CA34F5
+    dns_names: [ESP_CA34F5.occido.net]
+    ip: 192.168.5.113
+    mac: "68:c6:3a:ca:34:f5"
+    notes: Tuya/Smart Life. One of this pair is the front-door light switch; MAC mapping is unconfirmed. The other is an unidentified sibling.
+  - id: esp-ca2ced
+    class: iot
+    name: ESP_CA2CED
+    dns_names: [ESP_CA2CED.occido.net]
+    ip: 192.168.5.114
+    mac: "68:c6:3a:ca:2c:ed"
+    notes: Tuya/Smart Life. One of this pair is the front-door light switch; MAC mapping is unconfirmed. The other is an unidentified sibling.
+  - id: honeywell-thermostat
+    class: iot
+    name: Honeywell-Thermostat
+    dns_names: [Gateway3164F5.occido.net, Gateway3164F5]
+    ip: 192.168.5.133
+    mac: "48:a2:e6:31:64:f5"
+    notes: Honeywell/Resideo home thermostat. Little or no Pi-hole DNS. Azure keepalives. Phone app hits resideo.com.
+# candidates_not_in_v1:
+#   - MYCAR 192.168.5.149 mac 74:95:ec:66:44:e0 (unconfirmed, out of v1)
+#   - Kevin iPhone 192.168.5.119
+#   - Leslie iPhone 192.168.5.131
+#   - Leslie Apple Watch 192.168.5.105
+#   - Leslie iPad 192.168.5.108
+#   - Leslie printer HP22D620 192.168.5.127 mac 28:c5:c8:22:d6:20
+#   - Leslie's URMC work laptop BLN4N74 192.168.5.145 mac 80:c0:1e:38:32:36 (Kevin confirmed; corporate AD traffic; comment only, not an allowlist host)

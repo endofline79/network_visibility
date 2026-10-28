@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .demo import demo
-from .models import Overview,GlobeSnapshot,Alerts,OpsHome
+from .models import Overview,GlobeSnapshot,Alerts,OpsHome,DestinationsView
 from .auth import Viewer,Login,same_origin
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -50,7 +50,7 @@ def logout(request:Request):
     if not viewer:raise HTTPException(404,'Viewer sign-in is not configured in this demo')
     same_origin(request);request.session.clear()
     return {'authenticated':False}
-VERSION='0.3.0'
+VERSION='0.4.2'
 @app.get('/api/health')
 def health():return {'status':'ok','mode':MODE,'version':VERSION}
 @app.get('/api/overview',response_model=Overview)
@@ -85,6 +85,27 @@ def ops_home(window:Literal['15m','1h']='1h',scenario:Literal['normal','stale','
         from .service import service
         return ops_view.live_ops(service.client,anchor,seconds)
     except Exception:raise HTTPException(503,'Operations view cannot be validated right now') from None
+@app.get('/api/destinations',response_model=DestinationsView)
+def destinations(window:Literal['1h','24h','7d']='24h',host:str='all',scenario:Literal['normal','stale','unavailable','error']='normal',end:datetime|None=None):
+    anchor=end or datetime.now(timezone.utc).replace(second=0,microsecond=0)
+    if anchor.tzinfo is None:raise HTTPException(422,'A timezone is required')
+    anchor=anchor.astimezone(timezone.utc)
+    if (anchor-datetime.now(timezone.utc)).total_seconds()>60:raise HTTPException(422,'Future windows are unavailable')
+    if (datetime.now(timezone.utc)-anchor).total_seconds()>30*86400:raise HTTPException(422,'Window exceeds retention')
+    seconds={'1h':3600,'24h':86400,'7d':7*86400}[window]
+    from .inventory import InventoryError,load_inventory
+    from . import destinations as destinations_view
+    try:inventory=load_inventory()
+    except InventoryError:raise HTTPException(503,'IoT host inventory cannot be read') from None
+    if host!='all' and inventory.by_id(host) is None:raise HTTPException(404,'Host is not on the IoT allowlist')
+    if MODE=='demo':
+        if scenario=='error':raise HTTPException(503,'Demo unavailable state')
+        return destinations_view.demo_destinations(inventory,anchor,seconds,host,scenario)
+    if scenario!='normal':raise HTTPException(422,'Demo scenarios are unavailable in live mode')
+    try:
+        from .service import service
+        return destinations_view.live_destinations(service.client,inventory,anchor,seconds,host)
+    except Exception:raise HTTPException(503,'DNS destinations cannot be validated right now') from None
 @app.get('/api/alerts',response_model=Alerts)
 def alerts():
     from . import alerts as alert_view
