@@ -1,3 +1,11 @@
+# Loopback synthetic demo. Image tag 0.1.0 matches this file's historical demo
+# contract. AI-02 does not use this file.
+#
+# Live console: deploy/compose.live.yaml (visibility-console:0.4.2, auth
+# required, /run/visibility mounts). Planner env vars are repeated here so the
+# demo file and the live overlay name the same settings. This demo does not
+# call an LLM. llama-swap serves `visibility-planner` with --parallel 1; the
+# console queues planner calls on one in-process slot. Cloud fallback is off.
 name: visibility-presentation
 services:
   console:
@@ -7,6 +15,12 @@ services:
     restart: "no"
     environment:
       PRESENTATION_MODE: demo
+      PRESENTATION_AUTH: preview
+      PLANNER_TOKEN_FILE: /run/visibility/planner-token
+      PLANNER_MODEL: visibility-planner
+      LLM_BASE_URL: http://172.17.0.1:8081/v1
+      IOT_HOSTS_FILE: /run/visibility/iot-hosts.yaml
+      HOST_CACHE_REFRESH_SECONDS: "300"
     ports:
       - "127.0.0.1:8096:8096"
     user: "1000:1000"

@@ -10,7 +10,9 @@ The newer read-only [presentation app](presentation/README.md) was deployed at
 [layout release](docs/layout-release-2026-10-12.md) and
 [certificate review](docs/dashboard-certificate-review-2026-10-12.md).
 Its default [Compose configuration](compose.presentation.yaml) is a loopback-only
-synthetic demo. Live deployment settings and credentials remain outside Git.
+synthetic demo. AI-02 runs [deploy/compose.live.yaml](deploy/compose.live.yaml)
+(`visibility-console:0.4.2`, authentication required). Tokens stay on the host.
+See [Phase 0 planner prep](docs/phase0-planner-prep.md).
 The dashboard descriptions below document the retained legacy UI.
 
 ## Retained legacy dashboard
@@ -133,8 +135,8 @@ This is not a byte-for-byte archive of the original syslog envelope.
 | Custom dashboard | `http://192.168.5.230:8095` on the trusted LAN |
 | Data | `/home/klab/.local/share/visibility/victorialogs` |
 | Retention | 30 days, as requested; expired records are automatically removed |
-| Container limits | 2 CPUs, 2 GiB RAM, no swap |
-| Cache budget | 1 GiB within that memory limit |
+| Container limits | 2 CPUs, 4 GiB RAM, no swap (raised from 2 GiB on 2026-11-01) |
+| Cache budget | 3 GiB (`-memory.allowedBytes`), kept under the container limit |
 | Disk protection | Switch to read-only when the data filesystem has less than 20 GiB free |
 | Runtime | UID/GID 1000, read-only container filesystem, capabilities dropped |
 | Legacy timestamps | Interpret RFC3164 timestamps as `America/New_York` |
@@ -202,7 +204,10 @@ OPNsense-style RFC5424/filterlog messages. They expire under normal retention.
 
 Under **System > Settings > Logging**, the remote destination **AI-02 Visibility**
 is enabled. It reuses UUID `ad8bb8eb-1abc-4a3d-9d2c-8f36577da137`, previously the
-disabled `telemetry-alloy` target on port 1514. Do not add a duplicate destination.
+disabled `telemetry-alloy` target on port 1514. Do not add another destination
+that forwards every program. A filterlog-only relay on port 1515 is in
+`compose.yaml` but is **not** the live OPNsense target. See
+[Phase 0 planner prep](docs/phase0-planner-prep.md) before any syslog change.
 
 | Setting | Value |
 | --- | --- |

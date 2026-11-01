@@ -6,7 +6,7 @@ Single-node VictoriaLogs v1.52.0 on AI-02, 30-day retention. Raw backend HTTP is
 
 | Filter | Content | Important limits |
 | --- | --- | --- |
-| `app_name:=filterlog` | OPNsense firewall decisions, raw CSV in `_msg` | Only logged rules; not a complete traffic meter. Use the bundled `--parse-firewall` helper for structured decisions. `direction` is relative to the interface. |
+| `app_name:=filterlog` | OPNsense firewall decisions, raw CSV in `_msg` | Only logged rules; not a complete traffic meter. Use the bundled `--parse-firewall` helper for structured decisions. `direction` is relative to the interface. Ingest-time fields (`action`, `src`, `dst`, and the rest from the filterlog relay) exist only after the OPNsense cutover, which is not applied. Until then `_msg` is raw CSV. |
 | `app_name:=opnsense-flow schema:=2` | NetFlow v9 routed traffic, structured IPs/ports/protocol/counters | Deduplicate `event_id`; schema 1 bootstrap counters were invalid. Records are not sessions. |
 | `app_name:=pihole-dns` | DNS events: domain, query_type, status, outcome, client_ip, client_name, upstream, reply_type | Deduplicate `event_id`. Queries only seen by Pi-hole. Polling is 60s with 60s settling; not live packet capture. |
 | `app_name:=unifi-snapshot` | Periodic inventory, devices, clients, networks; starts with headless deployment | `entity_kind` is snapshot/device/client/network. Samples, not a complete change audit. |

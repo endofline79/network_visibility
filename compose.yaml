@@ -1,3 +1,7 @@
+# AI-02 stack. VictoriaLogs memory matches the 2026-11-01 live bump
+# (3GiB allowedBytes, 4g container, no swap headroom). filterlog-relay is idle
+# until OPNsense is repointed; that cutover is not done.
+# See docs/phase0-planner-prep.md.
 name: visibility
 
 services:
@@ -9,7 +13,7 @@ services:
       - -storageDataPath=/storage
       - -retentionPeriod=30d
       - -storage.minFreeDiskSpaceBytes=20GiB
-      - -memory.allowedBytes=1GiB
+      - -memory.allowedBytes=3GiB
       - -httpListenAddr=:9428
       - -syslog.listenAddr.tcp=:5514
       - -syslog.listenAddr.udp=:5514
@@ -34,8 +38,8 @@ services:
     security_opt:
       - no-new-privileges:true
     cpus: 2.0
-    mem_limit: 2g
-    memswap_limit: 2g
+    mem_limit: 4g
+    memswap_limit: 4g
     pids_limit: 128
     stop_grace_period: 60s
     logging:
@@ -214,6 +218,153 @@ services:
     memswap_limit: 512m
     pids_limit: 64
     stop_grace_period: 35s
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # Parses filterlog before insert. OPNsense still sends to logs :514.
+  # Port 1515 avoids 514 (VictoriaLogs) and 1514 (disabled telemetry-alloy target).
+  # Repointing OPNsense requires an explicit OK. See docs/phase0-planner-prep.md.
+  filterlog-relay:
+    image: visibility-filterlog-relay:0.1.0
+    build:
+      context: .
+      dockerfile: filterlog-relay/Dockerfile
+    restart: unless-stopped
+    user: "${VISIBILITY_UID:-1000}:${VISIBILITY_GID:-1000}"
+    environment:
+      VICTORIALOGS_URL: http://logs:9428
+      LOCAL_NETWORKS: "${LOCAL_NETWORKS:-192.168.5.0/24,10.10.10.0/24,10.10.20.0/24}"
+      RELAY_BIND: 0.0.0.0
+      RELAY_PORT: "1515"
+    ports:
+      - "${SYSLOG_BIND_ADDRESS:?Set AI-02 LAN address in .env}:${FILTERLOG_RELAY_PORT:-1515}:1515/tcp"
+    depends_on:
+      - logs
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 0.25
+    mem_limit: 128m
+    memswap_limit: 128m
+    pids_limit: 32
+    stop_grace_period: 15s
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; s=socket.create_connection(('127.0.0.1',1515),3); s.close()"
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # Live on AI-02 as visibility-alerter:0.1.0. The image build context
+  # (alerter/Dockerfile, alerter/rules.json) is not in this git repo; it lives
+  # on the host checkout. This block matches that running service. Secret
+  # values stay in files named by *_FILE; nothing secret is inlined here.
+  alerter:
+    image: visibility-alerter:0.1.0
+    build:
+      context: .
+      dockerfile: alerter/Dockerfile
+    restart: unless-stopped
+    user: "${VISIBILITY_UID:-1000}:${VISIBILITY_GID:-1000}"
+    group_add:
+      - "${DOCKER_GID:?Set the docker socket group id in .env}"
+    environment:
+      VICTORIALOGS_URL: http://logs:9428
+      ALERTER_STATE_DIR: /state
+      ALERT_INSERT_URL: https://api:8427/insert/jsonline?_stream_fields=hostname,app_name
+      ALERT_INSERT_TOKEN_FILE: /run/visibility-secrets/alert_insert_token
+      ALERT_API_CERT_FILE: /certs/telemetry-api/server.crt
+      WEBHOOK_URL_FILE: /run/visibility-secrets/alert_webhook_url
+      WEBHOOK_KEY_FILE: /run/visibility-secrets/alert_webhook_key
+    volumes:
+      - type: bind
+        source: ./alerter/rules.json
+        target: /app/rules.json
+        read_only: true
+      - type: bind
+        source: ${ALERTER_STATE_DIR:-/home/klab/.local/share/visibility/alerter}
+        target: /state
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${LOG_DATA_DIR:?Set a persistent data directory in .env}
+        target: /data
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TELEMETRY_API_SECRETS_DIR:-/home/klab/.local/share/visibility/telemetry-api}/server.crt
+        target: /certs/telemetry-api/server.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PRESENTATION_CA_FILE:-/home/klab/.local/share/visibility/presentation/dashboard-ca.crt}
+        target: /certs/presentation/dashboard-ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${VISIBILITY_CERTS_DIR:-/home/klab/.local/share/visibility/certs}
+        target: /certs/public
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${VISIBILITY_SECRETS_DIR:-/home/klab/.local/share/visibility/secrets}/alert_insert_token
+        target: /run/visibility-secrets/alert_insert_token
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${VISIBILITY_SECRETS_DIR:-/home/klab/.local/share/visibility/secrets}/alert_webhook_url
+        target: /run/visibility-secrets/alert_webhook_url
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${VISIBILITY_SECRETS_DIR:-/home/klab/.local/share/visibility/secrets}/alert_webhook_key
+        target: /run/visibility-secrets/alert_webhook_key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 0.25
+    mem_limit: 128m
+    memswap_limit: 128m
+    pids_limit: 32
+    stop_grace_period: 15s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json,time,pathlib; d=json.loads(pathlib.Path('/state/status.json').read_text()); raise SystemExit(0 if time.time()-float(d['updated_at'])<150 else 1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
     logging:
       driver: local
       options:

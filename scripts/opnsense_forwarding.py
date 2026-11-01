@@ -3,6 +3,10 @@
 
 Run through Phase so API credentials stay in the short-lived process environment.
 Only the known target is modified. Output never includes credentials or log bodies.
+
+This helper owns the all-programs destination on TCP 514 (VictoriaLogs). Do not
+point it at filterlog-relay. A filterlog-only destination is a separate change
+and is not applied. See docs/phase0-planner-prep.md.
 """
 
 import argparse
