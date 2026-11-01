@@ -1,4 +1,8 @@
-"""Loopback-first presentation. No collectors, ingestion, controller calls or AI runtime."""
+"""Loopback-first presentation. No collectors or controller calls.
+
+Phase 0 adds a host-name cache and planner settings for a later ask path.
+This process does not call an LLM.
+"""
 import os
 from datetime import datetime,timedelta,timezone
 from pathlib import Path
@@ -10,6 +14,8 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .demo import demo
 from .models import Overview,GlobeSnapshot
 from .auth import Viewer,Login,same_origin
+from .hosts import HostCache
+from .planner import status as planner_status
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
@@ -87,7 +93,18 @@ def live_globe(scenario:Literal['normal','stale','unavailable','error']='normal'
 if MODE=='live':
     from .service import service
     from .live_globe import LiveGlobe
+    from .client import QueryClient
     globe_service=LiveGlobe(service.client,service.geo)
+    _planner_queries=QueryClient()
+    _planner_queries.token_path=Path(os.getenv('PLANNER_TOKEN_FILE','/run/visibility/planner-token'))
+    host_cache=HostCache(clients=[_planner_queries,service.client])
+    if os.getenv('HOST_CACHE_AUTOSTART','1')!='0':host_cache.start()
+else:
+    host_cache=HostCache()
+@app.get('/api/hosts')
+def hosts():return host_cache.snapshot()
+@app.get('/api/planner')
+def planner():return planner_status()
 if STATIC.exists():
     app.mount('/assets',StaticFiles(directory=STATIC/'assets'),name='assets')
     @app.get('/')

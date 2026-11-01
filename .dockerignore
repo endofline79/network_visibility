@@ -1,4 +1,9 @@
 **
+!filterlog-relay/
+!filterlog-relay/**
+!presentation/
+!presentation/backend/
+!presentation/backend/filterlog.py
 !dashboard/
 !dashboard/**
 !collector/

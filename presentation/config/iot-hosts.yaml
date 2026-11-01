@@ -1,0 +1,7 @@
+# Highest-priority names for the console host cache.
+# On AI-02, copy this file to:
+#   /home/klab/.local/share/visibility/presentation/iot-hosts.yaml
+# The console bind-mounts that directory at /run/visibility/iot-hosts.yaml.
+# Maximum 16 hosts. Fields: id, class, name, dns_names, ip, mac, notes.
+# At least one of ip or mac is required. This packaged file is empty on purpose.
+hosts: []

@@ -2,6 +2,8 @@
 
 A read-only presentation of existing Visibility telemetry. The map extends presentation read models; it does not start, configure or restart collectors. Live mode requires the existing authenticated viewer and fixed-origin HTTPS query client. Credentials, source gates, retention, query limits and network configuration remain unchanged.
 
+Phase 0 prepares a later ask path and does not call an LLM. AI-02 uses [deploy/compose.live.yaml](../deploy/compose.live.yaml). This directory's demo compose file stays on loopback. `GET /api/hosts` and `GET /api/planner` expose the host-name cache and the pinned `visibility-planner` settings (`PLANNER_TOKEN_FILE`, model `visibility-planner`, base `http://172.17.0.1:8081/v1`). llama-swap serves that alias with `--parallel 1`; `planner_call()` holds one in-process slot. See [Phase 0 planner prep](../docs/phase0-planner-prep.md).
+
 The globe is replaced by a locally bundled vector world map. Drag pans; accessible buttons and arrow keys pan/zoom, Home fits the world, and zoom is bounded from 100% to 800%. Fit selected country/areas uses the current geographic estimates. Ordinary wheel and vertical touch gestures scroll the relevant pane when it has overflow; the document stays fixed. A visible opt-in toggle enables wheel/pinch zoom and two-dimensional touch pan. Movement, multiple pointers, cancellation and held drags consume selection for the entire gesture. Country filters and area details do not reset the camera on refresh. Reduced motion disables observation highlighting. No third-party tiles, geolocation requests, tracking or external browser requests are required.
 
 ## Map layout

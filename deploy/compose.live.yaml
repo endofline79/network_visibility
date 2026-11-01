@@ -1,0 +1,92 @@
+# AI-02 live presentation overlay. Deploy with:
+#   docker compose -f deploy/compose.live.yaml up -d
+# The running image is visibility-console:0.4.2 (pull_policy: never). Host-cache
+# and planner modules added after that image was built are not inside it until
+# the console image is rebuilt and retagged.
+#
+# Secrets stay on the host under ~/.local/share/visibility/presentation/ and are
+# bind-mounted read-only at /run/visibility. This file has paths only.
+# Do not commit planner-token, viewer.json, dashboard.key, or query-token.
+#
+# Planner wiring (the ask UI is not in this image yet):
+#   PLANNER_TOKEN_FILE  vmauth user console-planner (select logsql + health only)
+#   host file           ~/.local/share/visibility/presentation/planner-token
+#   LLM_BASE_URL        llama-swap on docker0, OpenAI-compatible /v1
+#   PLANNER_MODEL       visibility-planner
+# llama-swap runs that alias with --parallel 1 (one decode slot). The console
+# queues planner calls in-process. There is no cloud LLM fallback.
+# Keep the uvicorn command single-process; extra workers would each take a slot.
+name: visibility-presentation
+services:
+  console:
+    image: visibility-console:0.4.2
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      PRESENTATION_MODE: live
+      PRESENTATION_AUTH: required
+      VIEWER_CONFIG_FILE: /run/visibility/viewer.json
+      TELEMETRY_TOKEN_FILE: /run/visibility/query-token
+      TELEMETRY_CA_FILE: /run/visibility/telemetry-ca.crt
+      GEOIP_DATABASE: /geoip/dbip-city-lite.mmdb
+      PLANNER_TOKEN_FILE: /run/visibility/planner-token
+      PLANNER_MODEL: visibility-planner
+      LLM_BASE_URL: http://172.17.0.1:8081/v1
+      IOT_HOSTS_FILE: /run/visibility/iot-hosts.yaml
+      HOST_CACHE_REFRESH_SECONDS: "300"
+    command:
+      - uvicorn
+      - backend.app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8096"
+      - --ssl-certfile
+      - /run/visibility/dashboard.crt
+      - --ssl-keyfile
+      - /run/visibility/dashboard.key
+      - --no-access-log
+      - --no-proxy-headers
+      - --limit-concurrency
+      - "32"
+    ports:
+      - "192.168.5.230:8096:8096"
+    volumes:
+      - type: bind
+        source: /home/klab/.local/share/visibility/presentation
+        target: /run/visibility
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /home/klab/.local/share/visibility/geoip
+        target: /geoip
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import ssl,urllib.request; r=urllib.request.urlopen('https://127.0.0.1:8096/api/health',context=ssl.create_default_context(cafile='/run/visibility/telemetry-ca.crt'),timeout=3); assert r.status==200"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cpus: 1.0
+    mem_limit: 512m
+    memswap_limit: 512m
+    pids_limit: 64
+    stop_grace_period: 15s
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "2"

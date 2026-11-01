@@ -25,6 +25,8 @@ from backend.app import app
 c=TestClient(app,base_url='https://testserver')
 assert c.get('/api/overview').status_code==401
 assert c.get('/api/globe').status_code==401
+assert c.get('/api/hosts').status_code==401
+assert c.get('/api/planner').status_code==401
 assert c.post('/api/session/login',json={'username':'viewer-test','password':'test-only-password'}).status_code==403
 r=c.post('/api/session/login',headers={'Origin':'https://testserver'},json={'username':'viewer-test','password':'test-only-password'})
 assert r.status_code==200
@@ -42,6 +44,8 @@ with patch.object(globe_service,'snapshot',return_value={'mode':'live','as_of':'
 assert c.post('/api/session/logout',headers={'Origin':'https://testserver'},json={}).status_code==200
 assert c.get('/api/overview').status_code==401
 assert c.get('/api/globe').status_code==401
+assert c.get('/api/hosts').status_code==401
+assert c.get('/api/planner').status_code==401
 print('authenticated-session-contract-ok')
 '''
    r=subprocess.run([sys.executable,'-c',program],env=env,text=True,capture_output=True,timeout=15)
