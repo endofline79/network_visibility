@@ -12,6 +12,8 @@ const url = process.env.PREVIEW_URL || 'http://127.0.0.1:8096';
     assert.equal(response.status(), 200);
     const baseline = await response.json();
     let fixture;
+    const emptyAlerts = {mode:'live', as_of:baseline.as_of, checker:'ok', illustrative:false, open:[], resolved:[]};
+    await page.route('**/api/alerts', route => route.fulfill({json:emptyAlerts}));
     await page.route('**/api/overview?*', route => route.fulfill({json:fixture}));
     const cases = [
       ['router stopped beyond lookback', 'router', 'stale', 1],

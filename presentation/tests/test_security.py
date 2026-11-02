@@ -27,6 +27,12 @@ assert c.get('/api/overview').status_code==401
 assert c.get('/api/globe').status_code==401
 assert c.get('/api/hosts').status_code==401
 assert c.get('/api/planner').status_code==401
+assert c.get('/api/alerts').status_code==401
+assert c.get('/api/ops').status_code==401
+assert c.get('/api/destinations').status_code==401
+assert c.post('/api/alerts',json={}).status_code==405
+assert c.post('/api/ops',json={}).status_code==405
+assert c.post('/api/destinations',json={}).status_code==405
 assert c.post('/api/session/login',json={'username':'viewer-test','password':'test-only-password'}).status_code==403
 r=c.post('/api/session/login',headers={'Origin':'https://testserver'},json={'username':'viewer-test','password':'test-only-password'})
 assert r.status_code==200
@@ -41,11 +47,42 @@ with patch.object(globe_service,'snapshot',return_value={'mode':'live','as_of':'
  assert read.call_count==1
  assert c.get('/api/globe?scenario=stale').status_code==422
  assert c.post('/api/globe',json={}).status_code==405
+from backend import alerts as alerts_mod
+fixture={'mode':'live','as_of':'2026-10-24T16:00:00Z','checker':'ok','illustrative':False,'open':[],'resolved':[]}
+with patch.object(alerts_mod,'live_alerts',return_value=fixture) as read_alerts:
+ assert c.get('/api/alerts').status_code==200
+ assert read_alerts.call_count==1
+ assert c.post('/api/alerts',json={}).status_code==405
+from backend import ops as ops_mod
+from datetime import datetime, timezone
+ops_payload=ops_mod.demo_ops(datetime(2026,10,24,16,tzinfo=timezone.utc),3600,'normal')
+ops_payload['mode']='live'
+ops_payload['illustrative']=False
+with patch.object(ops_mod,'live_ops',return_value=ops_payload) as read_ops:
+ assert c.get('/api/ops').status_code==200
+ assert read_ops.call_count==1
+ assert c.get('/api/ops?window=24h').status_code==422
+ assert c.post('/api/ops',json={}).status_code==405
+from backend import destinations as dest_mod
+from backend.inventory import load_inventory
+inv=load_inventory()
+payload=dest_mod.demo_destinations(inv,datetime(2026,10,24,16,tzinfo=timezone.utc),86400,'all','normal')
+payload['mode']='live'
+payload['illustrative']=False
+with patch.object(dest_mod,'live_destinations',return_value=payload) as read_dest:
+ assert c.get('/api/destinations').status_code==200
+ assert read_dest.call_count==1
+ assert c.get('/api/destinations?window=15m').status_code==422
+ assert c.get('/api/destinations?host=not-a-host').status_code==404
+ assert c.post('/api/destinations',json={}).status_code==405
 assert c.post('/api/session/logout',headers={'Origin':'https://testserver'},json={}).status_code==200
 assert c.get('/api/overview').status_code==401
 assert c.get('/api/globe').status_code==401
 assert c.get('/api/hosts').status_code==401
 assert c.get('/api/planner').status_code==401
+assert c.get('/api/alerts').status_code==401
+assert c.get('/api/ops').status_code==401
+assert c.get('/api/destinations').status_code==401
 print('authenticated-session-contract-ok')
 '''
    r=subprocess.run([sys.executable,'-c',program],env=env,text=True,capture_output=True,timeout=15)

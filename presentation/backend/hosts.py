@@ -255,6 +255,32 @@ def _unique(hosts):
     return hosts
 
 
+def _from_inventory(path):
+    """AI-02's allowlist uses the inventory.py schema (version: 1, flow lists).
+
+    Reuse that validated loader so one file serves /api/destinations and the
+    host cache. Notes and DNS names the strict cache rules reject are dropped.
+    """
+    try:
+        from .inventory import InventoryError, load_inventory
+        inventory = load_inventory(path)
+    except Exception:
+        return None
+    rows = []
+    for index, host in enumerate(inventory.hosts, 1):
+        row = {'id': host.id, 'class': host.device_class, 'name': host.name,
+               'dns_names': [n for n in host.dns_names if DNS_RE.fullmatch(n.lower())][:4],
+               'ip': host.ip, 'mac': host.mac}
+        try:
+            rows.append(_validate_host(row, index))
+        except ValueError:
+            return None
+    try:
+        return _unique(rows)
+    except ValueError:
+        return None
+
+
 def load_iot_hosts(path):
     if path is None:
         return [], {'state': 'absent', 'count': 0, 'note': 'No iot-hosts.yaml is configured.'}
@@ -263,6 +289,9 @@ def load_iot_hosts(path):
     except OSError:
         return [], {'state': 'absent', 'count': 0, 'note': 'iot-hosts.yaml could not be read.'}
     except (UnicodeError, ValueError):
+        hosts = _from_inventory(path)
+        if hosts is not None:
+            return hosts, {'state': 'ok', 'count': len(hosts), 'path': str(path)}
         return [], {
             'state': 'error',
             'count': 0,

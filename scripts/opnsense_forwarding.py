@@ -34,6 +34,23 @@ ORIGINAL = dict(zip(FIELDS, ("0", "tcp4", "", "", "", "192.168.5.230", "",
 CHANGES = {"enabled": "1", "port": "514", "rfc5424": "1",
            "description": "AI-02 Visibility"}
 DESIRED = {**ORIGINAL, **CHANGES}
+CA_SHA256 = "01132d772629f56e04cf18609409bceed0ac35af20b9959f78be2c20f1c142e0"
+
+
+def tls_context():
+    """Verify OPNsense against the pinned lab CA (not the system store).
+
+    OPNSENSE_CA_FILE (or SSL_CERT_FILE) points at the public Home Management CA
+    2026 certificate. The CA's SHA-256 fingerprint is checked before use.
+    """
+    cafile = os.environ.get("OPNSENSE_CA_FILE") or os.environ.get("SSL_CERT_FILE")
+    if not cafile:
+        cafile = str(Path.home() / ".local/share/visibility/pki/home-management-ca-2026.pem")
+    pem = Path(cafile).read_text()
+    der = ssl.PEM_cert_to_DER_cert(pem)
+    if hashlib.sha256(der).hexdigest() != CA_SHA256:
+        raise RuntimeError("Pinned CA fingerprint mismatch; stopped")
+    return ssl.create_default_context(cafile=cafile)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -59,7 +76,7 @@ def api(path, body=None):
         method="GET" if body is None else "POST",
     )
     opener = urllib.request.build_opener(
-        NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context())
+        NoRedirect(), urllib.request.HTTPSHandler(context=tls_context())
     )
     try:
         with opener.open(request, timeout=20) as response:
