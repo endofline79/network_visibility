@@ -835,6 +835,7 @@ dialog::backdrop {
   }
   .sidebar nav {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
   }
   .sidebar nav button {
@@ -845,6 +846,9 @@ dialog::backdrop {
   }
   .sidebar nav svg {
     width: 16px;
+  }
+  .sidebar nav button.nav-alerts {
+    display: none;
   }
   .sidebar-bottom {
     display: none;

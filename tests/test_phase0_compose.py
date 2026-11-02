@@ -30,7 +30,7 @@ class Phase0ComposeTests(unittest.TestCase):
             self.assertIn('PLANNER_MODEL: visibility-planner', text)
             self.assertIn('LLM_BASE_URL: http://172.17.0.1:8081/v1', text)
             self.assertIn('--parallel 1', text)
-        self.assertIn('visibility-console:0.4.2', live)
+        self.assertIn('visibility-console:0.4.3', live)
         self.assertIn('PRESENTATION_MODE: live', live)
         self.assertIn('docker compose -f deploy/compose.live.yaml up -d', live)
         self.assertNotIn('bearer_token', live.lower())

@@ -4,6 +4,33 @@ A read-only presentation of existing Visibility telemetry. The map extends prese
 
 Phase 0 prepares a later ask path and does not call an LLM. AI-02 uses [deploy/compose.live.yaml](../deploy/compose.live.yaml). This directory's demo compose file stays on loopback. `GET /api/hosts` and `GET /api/planner` expose the host-name cache and the pinned `visibility-planner` settings (`PLANNER_TOKEN_FILE`, model `visibility-planner`, base `http://172.17.0.1:8081/v1`). llama-swap serves that alias with `--parallel 1`; `planner_call()` holds one in-process slot. See [Phase 0 planner prep](../docs/phase0-planner-prep.md).
 
+`GET /api/alerts` lists open alerts and alerts resolved in the last day. Demo mode returns labelled illustrative alerts. The desktop workspace shows a short Alerts strip above the map; narrower windows keep that strip out of the fixed layout and open the same list from **Alerts** or **Needs attention**. The console does not write alerts or call the webhook.
+
+## Ops Home
+
+**Ops** in the left navigation opens the daily operations page. The map, the other navigation entries, and the Alerts drawer stay as they are.
+
+The page is one scrollable workspace, including at a narrow phone width:
+
+- **Source freshness** is the last-seen age for firewall logs, NetFlow, UniFi inventory, Pi-hole DNS, the Pi-hole summary, the OPNsense syslog family, and the alert-checker heartbeat. Warning and critical follow the checker, about 15 minutes and about 30 minutes. The heartbeat tile is critical after 3 minutes, the same limit as checker silence.
+- **Open alerts** is the existing `/api/alerts` list. **All alerts** opens the same Alerts drawer. There is no second alert model.
+- **Top LAN talkers** ranks egress-only NetFlow schema 2 bytes for the selected window. `event_id` is deduplicated before bytes are summed. A configured LAN source is credited; otherwise a LAN destination is. Post-NAT WAN uploads are not assigned to a client. The ranges stay in the backend network list and are not hard-coded in the frontend.
+- **Top firewall blocks** groups the newest logged `filterlog` lines by interface, source, destination, destination port, and protocol. The read is capped.
+- **Top DNS** ranks Pi-hole domains and clients after `event_id` deduplication.
+- **WAN gateway** is the newest OPNsense `dpinger` line from the last 30 minutes, plus any open `gateway-down` or `wan-ingress` alert. The page does not send a probe.
+
+The labelled window is **Last 15 minutes** or **Last hour**. A 24 hour flow ranking is not offered, because a long `stats by (event_id)` can exhaust VictoriaLogs memory. `GET /api/ops` runs the reads on the server through the existing query client. Demo mode labels the panels as illustrative. Live mode does not fill a failed read with demo data. An unauthenticated live request is rejected like the other API routes.
+
+`GET /api/health` reports version `0.4.3`. Deploy is a console image rebuild only. `compose.presentation.yaml` stays the loopback demo (`visibility-console:0.1.0`). The live overlay in `deploy/compose.live.yaml` still names `visibility-console:0.4.2` until that image is rebuilt from this tree and the tag is updated. Recreate only the presentation console. Collectors and VictoriaLogs stay up. This page does not change the OPNsense `:514` destination.
+
+## IoT and streaming DNS destinations
+
+**Destinations** in the left navigation lists Pi-hole names for the hosts in `config/iot-hosts.yaml`. The flat LAN is not a scope. There is no IoT VLAN, so a client is included only when that file lists its `ip` and the `name` / `dns_names` values Pi-hole stores in `client_name`. The page can show one host or every allowlisted host for the last hour, 24 hours, or 7 days.
+
+`GET /api/destinations` reads `app_name:=pihole-dns` through the existing VictoriaLogs client. The one-hour view deduplicates `event_id`, then counts domains. The 24 hour and 7 day views count stored receipts with `stats by (domain)` and do not group by `event_id`, because a multi-day event-id aggregation can exhaust VictoriaLogs. Each host also reports first and last seen time in the window. Domain rows are grouped by registrable domain (eTLD+1) for the site column. Blocked and allowed lookups both stay in the list. Demo mode labels the counts as illustrative and still uses this allowlist for the host names.
+
+To add a host, edit `config/iot-hosts.yaml` only: a new list item needs `id`, `class` (`iot` or `streaming`), `name`, `dns_names`, `ip`, `mac`, and optional `notes`. Rebuild and recreate the console image as above. The file is copied into the image; no collector or alerter change is required. Keep phones, PCs, printers, and INFRA gear out. MYCAR, the household phones, Leslie's watch, iPad, and printer, and Leslie's URMC work laptop BLN4N74 are comments at the bottom of the file and are not queried. Gateway3164F5 is the Honeywell/Resideo thermostat and is on the allowlist. The two Tuya hosts stay in the list without assigning either MAC to the front-door light switch.
+
 The globe is replaced by a locally bundled vector world map. Drag pans; accessible buttons and arrow keys pan/zoom, Home fits the world, and zoom is bounded from 100% to 800%. Fit selected country/areas uses the current geographic estimates. Ordinary wheel and vertical touch gestures scroll the relevant pane when it has overflow; the document stays fixed. A visible opt-in toggle enables wheel/pinch zoom and two-dimensional touch pan. Movement, multiple pointers, cancellation and held drags consume selection for the entire gesture. Country filters and area details do not reset the camera on refresh. Reduced motion disables observation highlighting. No third-party tiles, geolocation requests, tracking or external browser requests are required.
 
 ## Map layout
@@ -70,7 +97,7 @@ Observation highlights key off canonical area IDs and newer flow-end timestamps.
 
 ## Preview and verification
 
-Default mode is a clearly labelled synthetic demo; live data is never replaced by demo fixtures. Build with `npm --prefix frontend run build`, serve `backend.app:app` on loopback, and use the existing Python requirements. Map assets come from the already pinned `@d3-maps/atlas`, d3-geo and topojson-client dependencies. See THIRD_PARTY.md and the bundled atlas license.
+Default mode is a clearly labelled synthetic demo; live data is never replaced by demo fixtures. From the repository root, `docker compose -f compose.presentation.yaml build console` builds the loopback demo image (`visibility-console:0.1.0`) using this directory as the Docker context. The live host Compose file does not contain that build. Build the frontend for a local preview with `npm --prefix frontend run build`, serve `backend.app:app` on loopback, and use the existing Python requirements. Map assets come from the already pinned `@d3-maps/atlas`, d3-geo and topojson-client dependencies. See THIRD_PARTY.md and the bundled atlas license.
 
 From the repository root, prepare an isolated local environment (Python 3.12+
 and Node.js 22):
@@ -100,7 +127,7 @@ npm install --prefix .browser-qa --no-save --package-lock=false playwright@1.60.
 node .browser-qa/node_modules/playwright/cli.js install chromium
 export PLAYWRIGHT_MODULE="$PWD/.browser-qa/node_modules/playwright"
 for suite in browser_qa coverage_qa map_initial_qa map_qa map_refresh_qa \
-  map_quality_qa map_marker_press_qa map_performance; do
+  map_quality_qa map_marker_press_qa map_performance ops_qa; do
   node "tests/$suite.cjs" || exit 1
 done
 ```

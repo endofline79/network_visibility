@@ -18,7 +18,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY --from=test /app/backend/ backend/
-COPY config/ config/
+COPY --from=test /app/config/ config/
 COPY --from=frontend /build/dist/ static/
 USER 1000:1000
 EXPOSE 8096

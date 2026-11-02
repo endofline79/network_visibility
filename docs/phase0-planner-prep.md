@@ -105,8 +105,19 @@ below, the relay is idle and `:514` ingest is unchanged.
 5. `scripts/opnsense_forwarding.py` only knows that one all-programs UUID. Do
    not change its port to 1515. Its `rollback` action restores the disabled
    port-1514 target and stops forwarding. It is not the relay rollback.
-6. Relay rollback: remove or disable the filterlog-only destination first, then
-   `docker compose stop filterlog-relay`. Port 514 keeps ingesting raw filterlog.
+   API calls verify TLS against the pinned Home Management CA 2026
+   (SHA-256 `01132d772629f56e04cf18609409bceed0ac35af20b9959f78be2c20f1c142e0`).
+   Point `OPNSENSE_CA_FILE` or `SSL_CERT_FILE` at that public CA PEM. If neither
+   is set, the script reads `~/.local/share/visibility/pki/home-management-ca-2026.pem`.
+   A fingerprint mismatch stops the script. Do not commit the private key.
+6. `scripts/opnsense_filterlog_relay.py` is the filterlog-only helper. It adds,
+   inspects, or removes one destination: TCP/IPv4, RFC5424, `192.168.5.230:1515`,
+   program `filterlog`. It uses the same pinned CA and never edits the `:514`
+   UUID. While both destinations include filterlog, those rows are stored
+   twice. That double-store stays until a later cutover; do not trim `:514` here.
+7. Relay rollback: remove or disable the filterlog-only destination first
+   (`opnsense_filterlog_relay.py rollback`), then `docker compose stop filterlog-relay`.
+   Port 514 keeps ingesting raw filterlog.
 
 Optional `RELAY_ALLOW_FROM` can limit peers. Loopback stays allowed so the
 container healthcheck works. Docker's published-port source address is not a
@@ -121,12 +132,15 @@ live mode requires the existing viewer session).
 
 Merge order:
 
-1. `iot-hosts.yaml` (highest). Packaged file
-   `presentation/config/iot-hosts.yaml` is an empty allowlist. On AI-02, put the
-   real file at `~/.local/share/visibility/presentation/iot-hosts.yaml` so the
-   console sees `/run/visibility/iot-hosts.yaml`. At most 16 hosts. Values are
-   checked before they can be reused in LogsQL; the cache queries themselves
-   are fixed strings and do not interpolate the file.
+1. `iot-hosts.yaml` (highest). The packaged file
+   `presentation/config/iot-hosts.yaml` is the v1 IoT and streaming allowlist
+   (`version: 1`, the same list `GET /api/destinations` uses). The strict cache
+   parser still requires a file that starts with `hosts`; `load_iot_hosts`
+   falls back to `inventory.py` for the v1 shape and drops DNS names that fail
+   the cache's DNS rule. A mounted `IOT_HOSTS_FILE` still overrides the packaged
+   file. An empty `hosts: []` file stays on the strict parser. At most 16 hosts.
+   Values are checked before they can be reused in LogsQL; the cache queries
+   themselves are fixed strings and do not interpolate the file.
 2. UniFi `app_name:=unifi-snapshot` clients from the last 15 minutes, keyed by
    MAC. A hand entry with the same MAC keeps its name and also matches the
    UniFi IP.
