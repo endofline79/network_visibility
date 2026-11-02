@@ -1,8 +1,6 @@
 # AI-02 live presentation overlay. Deploy with:
 #   docker compose -f deploy/compose.live.yaml up -d
-# The running image is visibility-console:0.4.2 (pull_policy: never). Host-cache
-# and planner modules added after that image was built are not inside it until
-# the console image is rebuilt and retagged.
+# The running image is visibility-console:0.4.3 (pull_policy: never).
 #
 # Secrets stay on the host under ~/.local/share/visibility/presentation/ and are
 # bind-mounted read-only at /run/visibility. This file has paths only.
@@ -19,7 +17,7 @@
 name: visibility-presentation
 services:
   console:
-    image: visibility-console:0.4.2
+    image: visibility-console:0.4.3
     pull_policy: never
     restart: unless-stopped
     environment:
