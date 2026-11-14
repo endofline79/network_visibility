@@ -17,7 +17,7 @@ const base = process.env.PREVIEW_URL || "http://127.0.0.1:8096";
     p.on("request", (r) => {
       if (r.url().includes("/api/globe")) requests.push(Date.now());
     });
-    await p.goto(base);
+    await p.goto(base + "/legacy");
     const v = p.locator(".world-view"),
       vp = v.locator(".map-viewport");
     await v.locator(".map-marker").first().waitFor();

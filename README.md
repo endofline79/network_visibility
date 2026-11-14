@@ -11,7 +11,7 @@ The newer read-only [presentation app](presentation/README.md) was deployed at
 [certificate review](docs/dashboard-certificate-review-2026-10-12.md).
 Its default [Compose configuration](compose.presentation.yaml) is a loopback-only
 synthetic demo. AI-02 runs [deploy/compose.live.yaml](deploy/compose.live.yaml)
-(`visibility-console:0.4.2`, authentication required). Tokens stay on the host.
+(`visibility-console:0.5.0`, authentication required). Tokens stay on the host.
 See [Phase 0 planner prep](docs/phase0-planner-prep.md).
 The dashboard descriptions below document the retained legacy UI.
 

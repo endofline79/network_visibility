@@ -20,7 +20,10 @@ const assert = require("node:assert/strict");
     if (!r.url().startsWith(process.env.PREVIEW_URL || "http://127.0.0.1:8096"))
       external.push(r.url());
   });
-  await page.goto(process.env.PREVIEW_URL || "http://127.0.0.1:8096");
+  await page.goto(
+    (process.env.PREVIEW_URL || "http://127.0.0.1:8096").replace(/\/$/, "") +
+      "/legacy",
+  );
   await page.getByText("DEMO DATA", { exact: true }).waitFor();
   await page
     .getByRole("heading", { name: "Network details", exact: true })

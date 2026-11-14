@@ -27,7 +27,7 @@ const base = process.env.PREVIEW_URL || "http://127.0.0.1:8096";
             (e) => (window.lastPointerId = e.pointerId),
           ),
         );
-        await page.goto(base);
+        await page.goto(base + "/legacy");
         const view = page.locator(".world-view"),
           viewport = view.locator(".map-viewport"),
           svg = viewport.locator("svg");
