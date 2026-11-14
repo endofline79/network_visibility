@@ -16,6 +16,7 @@
   --slate: #64748b;
   --green: #34d399;
   --r: 14px;
+  --rail: 68px;
 }
 * {
   box-sizing: border-box;
@@ -24,6 +25,8 @@ html,
 body {
   margin: 0;
   min-height: 100%;
+  max-width: 100%;
+  overflow-x: clip;
   background: var(--bg);
   color: var(--text);
   font-family:
@@ -54,11 +57,13 @@ input {
 #app {
   display: flex;
   min-height: 100vh;
+  width: 100%;
+  min-width: 0;
 }
 .sb {
   position: fixed;
   inset: 0 auto 0 0;
-  width: 68px;
+  width: var(--rail);
   background: #0c111b;
   border-right: 1px solid var(--line);
   display: flex;
@@ -150,23 +155,30 @@ input {
   box-shadow: 0 0 0 2px #0c111b;
 }
 main {
-  margin-left: 68px;
-  flex: 1;
-  padding: 26px 34px 22px;
+  margin-left: var(--rail);
+  flex: 1 1 auto;
+  padding: 26px clamp(14px, 2vw, 34px) 22px;
   min-width: 0;
-  max-width: 1500px;
+  max-width: none;
 }
 .top {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 20px;
+  flex-wrap: wrap;
+  gap: 16px 20px;
   margin-bottom: 20px;
+  min-width: 0;
 }
 .crumb {
   color: var(--muted);
   font-size: 13px;
   margin-bottom: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
 }
 .crumb a {
   color: var(--muted);
@@ -177,17 +189,29 @@ main {
 .crumb b {
   color: var(--text);
   font-weight: 500;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ttl {
   display: flex;
   align-items: center;
   gap: 16px;
+  min-width: 0;
+}
+.ttl > div {
+  min-width: 0;
 }
 .ttl h1 {
   margin: 0;
   font-size: 26px;
   font-weight: 650;
   letter-spacing: -0.4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .hicon {
   width: 52px;
@@ -247,7 +271,9 @@ main {
 .right {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
+  min-width: 0;
 }
 .badge {
   font-size: 11px;
@@ -285,6 +311,8 @@ main {
   border: 1px solid var(--line);
   border-radius: var(--r);
   padding: 18px 20px;
+  min-width: 0;
+  max-width: 100%;
 }
 .card h3 {
   margin: 0 0 14px;
@@ -293,7 +321,9 @@ main {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 10px;
+  min-width: 0;
 }
 .card h3 .h3s {
   color: var(--dim);
@@ -302,28 +332,41 @@ main {
 .grid {
   display: grid;
   gap: 16px;
+  min-width: 0;
 }
 .split {
-  grid-template-columns: 1.45fr 1fr;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
 }
 .split.even {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 .split.host {
-  grid-template-columns: 1.55fr 1fr;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
   align-items: start;
 }
 .kpis {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 16px;
+  min-width: 0;
 }
 .kpi {
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 16px 20px;
+  min-width: 0;
+}
+.kpi > div {
+  min-width: 0;
+}
+.kpi .kl,
+.kpi .kv,
+.kpi .ks {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .kpi .ki {
   width: 44px;
@@ -371,6 +414,7 @@ main {
 }
 .legend {
   display: flex;
+  flex-wrap: wrap;
   gap: 14px;
   font-size: 12px;
   color: var(--muted);
@@ -389,6 +433,10 @@ main {
 .rows {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
 }
 .row {
   display: grid;
@@ -415,16 +463,19 @@ main {
   grid-template-columns:
     30px minmax(150px, 1.1fr) minmax(120px, 1.6fr)
     72px 12px;
+  min-width: 540px;
 }
 .hostwide {
   grid-template-columns:
     30px minmax(170px, 1fr) 130px minmax(140px, 1.6fr)
     80px 12px;
+  min-width: 700px;
 }
 .siterow {
   grid-template-columns:
     26px minmax(130px, 1.1fr) 108px minmax(110px, 1.5fr)
     68px;
+  min-width: 580px;
 }
 .ic {
   width: 30px;
@@ -441,10 +492,8 @@ main {
 }
 .nm {
   font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   min-width: 0;
+  overflow: hidden;
 }
 .nm small {
   display: block;
@@ -452,6 +501,32 @@ main {
   font-size: 12px;
   font-weight: 400;
   margin-top: 1px;
+  min-width: 0;
+}
+.clip {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nm.dn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.nm.dn > .letter {
+  flex: none;
+}
+.nm.dn > .clip {
+  flex: 1 1 auto;
+  width: 0;
+}
+.chip .clip {
+  display: inline-block;
+  max-width: 16em;
+  vertical-align: bottom;
 }
 .val {
   text-align: right;
@@ -504,6 +579,9 @@ main {
   gap: 6px;
   white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 100%;
 }
 .cat i {
   width: 6px;
@@ -557,10 +635,13 @@ main {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
 }
 .blk .chip {
   font-size: 12px;
   padding: 4px 9px;
+  max-width: 100%;
+  min-width: 0;
 }
 .blk .chip b {
   font-weight: 600;
@@ -568,23 +649,40 @@ main {
 .chart {
   position: relative;
   width: 100%;
+  min-width: 0;
+  height: var(--chart-h, 220px);
+  overflow: hidden;
+}
+.chart svg,
+.chart canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
 }
 .chart svg {
-  display: block;
-  overflow: visible;
+  overflow: hidden;
+}
+.chart text {
+  font-family:
+    Inter,
+    "SF Pro Text",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
 }
 .axis {
   fill: var(--dim);
-  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 .gridl {
   stroke: #202838;
-  stroke-dasharray: 3 4;
 }
 .statline {
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap;
   gap: 10px;
   margin: -4px 0 10px;
 }
@@ -601,7 +699,14 @@ main {
 .donut {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 22px;
+  min-width: 0;
+}
+.donut svg {
+  width: min(140px, 100%);
+  height: auto;
+  flex: none;
 }
 .dleg {
   flex: 1;
@@ -639,18 +744,22 @@ main {
   stroke-width: 20;
 }
 .lrow {
-  grid-template-columns: 22px 1fr minmax(90px, 1.2fr) 64px;
+  grid-template-columns: 22px minmax(120px, 1fr) minmax(90px, 1.2fr) 64px;
+  min-width: 440px;
 }
 .srcrow {
   grid-template-columns:
     10px minmax(120px, 1fr) 92px minmax(80px, 1fr)
     52px 12px;
+  min-width: 540px;
 }
 .dstrow {
-  grid-template-columns: 24px 1fr auto auto 52px;
+  grid-template-columns: 24px minmax(140px, 1fr) auto auto 52px;
+  min-width: 460px;
 }
 .clrow {
-  grid-template-columns: 30px 1fr 70px 78px 12px;
+  grid-template-columns: 30px minmax(120px, 1fr) 70px 78px 12px;
+  min-width: 480px;
 }
 .rank {
   color: var(--dim);
@@ -792,35 +901,89 @@ main {
   font-size: 13px;
   margin: 0;
 }
+/* Around 1024: fewer columns. The icon rail stays. */
 @media (max-width: 1100px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .kpis > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
   .split,
   .split.even,
-  .split.host,
-  .kpis {
-    grid-template-columns: 1fr;
+  .split.host {
+    grid-template-columns: minmax(0, 1fr);
   }
   main {
     padding: 18px 16px 20px;
   }
-}
-@media (max-width: 720px) {
-  .hostrow,
-  .hostwide,
-  .siterow {
-    grid-template-columns: 30px minmax(0, 1fr) auto;
+  .chart {
+    height: min(var(--chart-h, 220px), 320px);
   }
-  .hostrow .bar,
-  .hostwide .bar,
-  .siterow .bar,
-  .srcrow .bar,
-  .hostwide .ip {
+}
+/* Narrow and phone widths: one column, navigation becomes a top bar. */
+@media (max-width: 720px) {
+  #app {
+    flex-direction: column;
+  }
+  .sb {
+    position: sticky;
+    inset: auto;
+    top: 0;
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 8px 10px;
+    gap: 4px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    overflow-x: auto;
+  }
+  .sb .logo {
+    margin: 0 8px 0 0;
+    flex: none;
+  }
+  .sb a {
+    flex: none;
+  }
+  .sb a.on::before,
+  .sb a .tt {
     display: none;
   }
-  .srcrow,
-  .clrow {
-    grid-template-columns: 30px minmax(0, 1fr) auto;
+  main {
+    margin-left: 0;
+    width: 100%;
+    padding: 16px 14px 24px;
   }
-  .dstrow {
-    grid-template-columns: 24px minmax(0, 1fr) auto;
+  .kpis,
+  .split,
+  .split.even,
+  .split.host {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .kpis > :last-child:nth-child(odd) {
+    grid-column: auto;
+  }
+  .top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .right {
+    justify-content: space-between;
+  }
+  .ttl h1 {
+    font-size: 22px;
+  }
+  .hicon {
+    width: 42px;
+    height: 42px;
+  }
+  .chart {
+    height: min(var(--chart-h, 220px), 230px);
+  }
+  .kpi .kv {
+    font-size: 22px;
   }
 }

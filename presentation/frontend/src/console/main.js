@@ -1,4 +1,5 @@
 import "./console.css";
+import { backingSize, debounce, pointerIndex } from "./chartFit.js";
 
 const P = {
   home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>',
@@ -90,6 +91,14 @@ const esc = (value) =>
       })[ch],
   );
 const tipAttr = (html) => `data-tip="${html.replace(/"/g, "&quot;")}"`;
+function clip(text, cls = "") {
+  const safe = esc(text);
+  const klass = cls ? `clip ${cls}` : "clip";
+  return `<span class="${klass}" title="${safe}">${safe}</span>`;
+}
+function chartBox(id, height) {
+  return `<div class="chart" id="${id}" style="--chart-h:${Number(height)}px"></div>`;
+}
 
 function fBytes(n) {
   if (n == null || Number.isNaN(Number(n))) return "—";
@@ -221,6 +230,9 @@ const state = {
 const cache = new Map();
 let token = 0;
 let chartReg = [];
+let chartObserver = null;
+let dprMedia = null;
+const scheduleChartDraw = debounce(() => drawCharts(), 80);
 
 function routeOf() {
   const parts = (location.hash.replace(/^#\/?/, "") || "overview").split("/");
@@ -362,18 +374,34 @@ function drawChart(el, o) {
   const values = o.series[0] && o.series[0].values;
   if (!values || values.length < 2) {
     el.innerHTML = `<div class="note">Not enough samples for a chart.</div>`;
+    delete el.dataset.fit;
     return;
   }
-  const W = el.clientWidth;
-  if (W < 20) return;
-  const H = o.h || 220;
-  const pl = o.pl ?? 46;
-  const pr = 12;
-  const pt = o.pt ?? 14;
-  const pb = 26;
+  const rect = el.getBoundingClientRect();
+  const box = backingSize(
+    rect.width,
+    rect.height,
+    window.devicePixelRatio || 1,
+  );
+  if (
+    box.cssWidth < 20 ||
+    box.cssHeight < 20 ||
+    box.width < 2 ||
+    box.height < 2
+  ) {
+    if (el.dataset.fit) {
+      el.innerHTML = "";
+      delete el.dataset.fit;
+    }
+    return;
+  }
+  const sig = `${box.width}x${box.height}`;
+  if (el.dataset.fit === sig && el.querySelector("svg")) return;
+  const dpr = box.dpr;
+  const S = (n) => n * dpr;
+  const W = box.width;
+  const H = box.height;
   const n = values.length;
-  const w = W - pl - pr;
-  const h = H - pt - pb;
   const stacks = [];
   let acc = new Array(n).fill(0);
   o.series.forEach((s) => {
@@ -386,8 +414,17 @@ function drawChart(el, o) {
   });
   const max =
     o.max || niceMax(Math.max(...stacks.map((s) => Math.max(...s.hi))) * 1.08);
+  const label = String(o.yFmt(max));
+  const pl = S(Math.max(o.pl ?? 46, Math.ceil(label.length * 6.6) + 18));
+  const pr = S(12);
+  const pt = S(o.pt ?? 14);
+  const pb = S(26);
+  const w = W - pl - pr;
+  const h = H - pt - pb;
+  if (w < S(8) || h < S(8)) return;
   const X = (i) => pl + (i / (n - 1)) * w;
   const Y = (v) => pt + h - (Math.min(v, max) / max) * h;
+  const fs = (px) => (px * dpr).toFixed(2);
   let g = "<defs>";
   o.series.forEach((s, k) => {
     g += `<linearGradient id="${el.id}g${k}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${s.color}" stop-opacity="${s.op ?? 0.38}"/><stop offset="1" stop-color="${s.color}" stop-opacity=".03"/></linearGradient>`;
@@ -396,40 +433,46 @@ function drawChart(el, o) {
   for (let k = 0; k <= 4; k++) {
     const v = (max * k) / 4;
     const y = Y(v);
-    g += `<line class="gridl" x1="${pl}" x2="${W - pr}" y1="${y}" y2="${y}"/><text class="axis" x="${pl - 10}" y="${y + 4}" text-anchor="end">${o.yFmt(v)}</text>`;
+    g += `<line class="gridl" x1="${pl}" x2="${W - pr}" y1="${y}" y2="${y}" stroke-width="${S(1)}" stroke-dasharray="${S(3)} ${S(4)}"/><text class="axis" x="${pl - S(10)}" y="${y + S(4)}" text-anchor="end" font-size="${fs(11)}">${o.yFmt(v)}</text>`;
   }
   (o.xt || []).forEach((i) => {
-    g += `<text class="axis" x="${X(i)}" y="${H - 6}" text-anchor="middle">${esc(o.xl(i))}</text>`;
+    const x = X(i);
+    const anchor =
+      x < pl + S(28) ? "start" : x > W - pr - S(28) ? "end" : "middle";
+    g += `<text class="axis" x="${x}" y="${H - S(6)}" text-anchor="${anchor}" font-size="${fs(11)}">${esc(o.xl(i))}</text>`;
   });
   o.series.forEach((s, k) => {
     const top = stacks[k].hi.map((v, i) => [X(i), Y(v)]);
     const bot = stacks[k].lo.map((v, i) => [X(i), Y(v)]).reverse();
     const line = smooth(top);
     const back = smooth(bot).replace(/^M/, "L");
-    g += `<path d="${line}${back}Z" fill="url(#${el.id}g${k})"/><path d="${line}" fill="none" stroke="${s.color}" stroke-width="${o.sw || 1.8}" stroke-linejoin="round"/>`;
+    g += `<path d="${line}${back}Z" fill="url(#${el.id}g${k})"/><path d="${line}" fill="none" stroke="${s.color}" stroke-width="${S(o.sw || 1.8)}" stroke-linejoin="round"/>`;
   });
   if (o.marker) {
     const m = o.marker;
     const x = X(m.i);
     const y = Y(stacks[stacks.length - 1].hi[m.i]);
-    g += `<line x1="${x}" x2="${x}" y1="${y}" y2="${pt + h}" stroke="${m.color}" stroke-dasharray="3 3" opacity=".7"/><circle cx="${x}" cy="${y}" r="4.5" fill="${m.color}" stroke="#0f1420" stroke-width="2"/>`;
-    const left = x - pl > 120;
-    const bx = left ? x - 106 : x + 14;
-    g += `<g transform="translate(${bx},${Math.max(y - 6, pt)})"><rect width="92" height="38" rx="8" fill="#0b0f18" stroke="#2b3548"/><text x="46" y="16" text-anchor="middle" fill="#e6ebf3" font-size="12" font-weight="600">${esc(m.t1)}</text><text x="46" y="30" text-anchor="middle" fill="${m.color}" font-size="11">${esc(m.t2)}</text></g>`;
+    const boxW = S(92);
+    const boxH = S(38);
+    let bx = x - pl > S(120) ? x - S(106) : x + S(14);
+    bx = Math.max(pl, Math.min(bx, W - pr - boxW));
+    const by = Math.max(Math.min(y - S(6), H - pb - boxH), pt);
+    g += `<line x1="${x}" x2="${x}" y1="${y}" y2="${pt + h}" stroke="${m.color}" stroke-width="${S(1)}" stroke-dasharray="${S(3)} ${S(3)}" opacity=".7"/><circle cx="${x}" cy="${y}" r="${S(4.5)}" fill="${m.color}" stroke="#0f1420" stroke-width="${S(2)}"/>`;
+    g += `<g transform="translate(${bx},${by})"><rect width="${boxW}" height="${boxH}" rx="${S(8)}" fill="#0b0f18" stroke="#2b3548" stroke-width="${S(1)}"/><text x="${boxW / 2}" y="${S(16)}" text-anchor="middle" fill="#e6ebf3" font-size="${fs(12)}" font-weight="600">${esc(m.t1)}</text><text x="${boxW / 2}" y="${S(30)}" text-anchor="middle" fill="${m.color}" font-size="${fs(11)}">${esc(m.t2)}</text></g>`;
   }
-  g += `<g class="hov" style="display:none"><line class="hl" y1="${pt}" y2="${pt + h}" stroke="#4a5569"/>${o.series.map((s) => `<circle r="3.5" fill="${s.color}" stroke="#0f1420" stroke-width="2"/>`).join("")}</g>`;
+  g += `<g class="hov" style="display:none"><line class="hl" y1="${pt}" y2="${pt + h}" stroke="#4a5569" stroke-width="${S(1)}"/>${o.series.map((s) => `<circle r="${S(3.5)}" fill="${s.color}" stroke="#0f1420" stroke-width="${S(2)}"/>`).join("")}</g>`;
   g += `<rect x="${pl}" y="${pt}" width="${w}" height="${h}" fill="transparent" class="ov"/>`;
-  el.innerHTML = `<svg width="${W}" height="${H}">${g}</svg>`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img">${g}</svg>`;
+  el.dataset.fit = sig;
   const ov = el.querySelector(".ov");
   const hov = el.querySelector(".hov");
   const cs = hov.querySelectorAll("circle");
   const hl = hov.querySelector(".hl");
+  const pad = pl / dpr;
+  const tail = pr / dpr;
   ov.addEventListener("mousemove", (e) => {
     const rc = el.getBoundingClientRect();
-    const i = Math.max(
-      0,
-      Math.min(n - 1, Math.round(((e.clientX - rc.left - pl) / w) * (n - 1))),
-    );
+    const i = pointerIndex(e.clientX - rc.left - pad, rc.width - pad - tail, n);
     hov.style.display = "";
     hl.setAttribute("x1", X(i));
     hl.setAttribute("x2", X(i));
@@ -448,6 +491,30 @@ function drawCharts() {
   chartReg.forEach(([id, options]) =>
     drawChart(document.getElementById(id), options),
   );
+}
+function bindChartResize() {
+  if (chartObserver) {
+    chartObserver.disconnect();
+    chartObserver = null;
+  }
+  const nodes = chartReg
+    .map(([id]) => document.getElementById(id))
+    .filter(Boolean);
+  if (typeof ResizeObserver === "function" && nodes.length) {
+    chartObserver = new ResizeObserver(() => scheduleChartDraw());
+    nodes.forEach((node) => chartObserver.observe(node));
+  }
+  drawCharts();
+}
+function onDprChange() {
+  watchResolution();
+  scheduleChartDraw();
+}
+function watchResolution() {
+  if (typeof matchMedia !== "function") return;
+  if (dprMedia) dprMedia.removeEventListener("change", onDprChange);
+  dprMedia = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+  dprMedia.addEventListener("change", onDprChange);
 }
 const tip = document.getElementById("tip");
 function showTip(html, x, y) {
@@ -518,10 +585,11 @@ function healthLine(health) {
 function topbar({ title, health, crumb, icon, sub, data }) {
   const badge =
     data && data.illustrative ? `<span class="badge">Example data</span>` : "";
-  return `<div class="top"><div>${crumb ? `<div class="crumb">${crumb}</div>` : ""}<div class="ttl">${icon ? `<div class="hicon">${ic(icon)}</div>` : ""}<div><h1>${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ""}${health || ""}</div></div></div><div class="right">${badge}${pill()}</div></div>`;
+  return `<div class="top"><div>${crumb ? `<div class="crumb">${crumb}</div>` : ""}<div class="ttl">${icon ? `<div class="hicon">${ic(icon)}</div>` : ""}<div><h1 title="${esc(title)}">${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ""}${health || ""}</div></div></div><div class="right">${badge}${pill()}</div></div>`;
 }
-function kpi(icon, cls, label, val, sub) {
-  return `<div class="card kpi"><div class="ki ${cls}">${ic(icon)}</div><div><div class="kl">${esc(label)}</div><div class="kv num">${val}</div><div class="ks">${sub}</div></div></div>`;
+function kpi(icon, cls, label, val, sub, tip) {
+  const title = tip ? ` title="${esc(tip)}"` : "";
+  return `<div class="card kpi"><div class="ki ${cls}">${ic(icon)}</div><div><div class="kl">${esc(label)}</div><div class="kv num"${title}>${val}</div><div class="ks">${sub}</div></div></div>`;
 }
 function foot(data) {
   const when = data && data.as_of ? `Updated ${esc(fullTime(data.as_of))}` : "";
@@ -553,8 +621,8 @@ function hostTotal(h) {
 function hostRow(h, max, wide) {
   const total = hostTotal(h);
   const sub = [h.type, h.location].filter(Boolean).join(" · ");
-  const ip = wide ? `<div class="ip">${esc(h.ip)}</div>` : "";
-  return `<a class="row click ${wide ? "hostrow hostwide" : "hostrow"}" href="#/host/${encodeURIComponent(h.id)}"><div class="ic">${ic(h.icon)}</div><div class="nm">${esc(h.name)}<small>${esc(sub)}</small></div>${ip}${stack(h.download_bytes || 0, h.upload_bytes || 0, max)}<div class="val">${fBytes(total)}</div><div class="chev">${ic("chev", 'width="14" height="14"')}</div></a>`;
+  const ip = wide ? `<div class="ip">${clip(h.ip)}</div>` : "";
+  return `<a class="row click ${wide ? "hostrow hostwide" : "hostrow"}" href="#/host/${encodeURIComponent(h.id)}"><div class="ic">${ic(h.icon)}</div><div class="nm">${clip(h.name)}${sub ? `<small>${clip(sub)}</small>` : ""}</div>${ip}${stack(h.download_bytes || 0, h.upload_bytes || 0, max)}<div class="val">${fBytes(total)}</div><div class="chev">${ic("chev", 'width="14" height="14"')}</div></a>`;
 }
 function otherText(other) {
   if (!other || (!other.bytes && !other.hosts)) return "";
@@ -598,7 +666,7 @@ function overviewPage(data) {
     topbar({ title: "Home Network", health: healthLine(data.health), data }) +
     `<div class="kpis">${kpi("down", "c-teal", "Total traffic", fBytes(total), esc(windowLabel(data)))}${kpi("devices", "c-violet", "Active hosts", active, esc(windowLabel(data)))}<a href="#/firewall" class="card kpi link"><div class="ki c-coral">${ic("shieldx")}</div><div><div class="kl">Blocked</div><div class="kv num">${data.totals.firewall_blocks == null ? "—" : fN(data.totals.firewall_blocks)}</div><div class="ks">${blockedSub}</div></div></a></div>` +
     `<div class="grid split"><div class="card"><h3><span>Traffic by host <span class="h3s">— ${esc(windowLabel(data))}</span></span>${legend()}</h3><div class="rows">${shown.map((h) => hostRow(h, max, false)).join("") || `<div class="note">No LAN hosts in this window.</div>`}</div>${hosts.length > 10 ? `<button type="button" class="more" data-act="toggleAll">${state.showAll ? "Show top 10" : `Show all ${hosts.length} hosts`}${otherText(data.other)}</button>` : `<div class="note">${otherText(data.other).replace(/^ · /, "")}</div>`}</div>` +
-    `<div class="card"><h3><span>Total throughput <span class="h3s">— ${esc(windowLabel(data))}</span></span></h3><div class="statline"><b>${total == null ? "—" : fMbps(mbps(total, data.window.seconds))}</b><span>average</span><span>${peakText}</span></div><div class="chart" id="thr"></div></div></div>` +
+    `<div class="card"><h3><span>Total throughput <span class="h3s">— ${esc(windowLabel(data))}</span></span></h3><div class="statline"><b>${total == null ? "—" : fMbps(mbps(total, data.window.seconds))}</b><span>average</span><span>${peakText}</span></div>${chartBox("thr", state.showAll ? 520 : 410)}</div></div>` +
     foot(data)
   );
 }
@@ -679,7 +747,7 @@ function hostPage(data) {
     : `DNS queries · ${data.blocked && data.blocked.length ? `${data.blocked.length} domains` : "none"}`;
   const down = h.download_bytes == null ? "—" : fBytes(h.download_bytes);
   const up = h.upload_bytes == null ? "—" : fBytes(h.upload_bytes);
-  const crumb = `<a href="#/overview">${ic("back", 'width="12" height="12" style="vertical-align:-1px"')} Overview</a> <span class="sep">/</span> <a href="#/hosts">Hosts</a> <span class="sep">/</span> <b>${esc(h.name)}</b>`;
+  const crumb = `<a href="#/overview">${ic("back", 'width="12" height="12" style="vertical-align:-1px"')} Overview</a><span class="sep">/</span><a href="#/hosts">Hosts</a><span class="sep">/</span><b title="${esc(h.name)}">${esc(h.name)}</b>`;
   const subBits = [`<span class="num">${esc(h.ip)}</span>`];
   if (h.location) subBits.push(esc(h.location));
   if (h.type)
@@ -687,7 +755,7 @@ function hostPage(data) {
   const tags = (data.blocked || [])
     .map(
       (b) =>
-        `<span class="chip c" ${tipAttr(`${esc(b.name)}<br><b>${fInt(b.queries)}</b> queries blocked · ${esc(windowLabel(data))}`)}>${ic("shieldx")}${esc(b.name)} <b>${fN(b.queries)}</b></span>`,
+        `<span class="chip c" title="${esc(b.name)}" ${tipAttr(`${esc(b.name)}<br><b>${fInt(b.queries)}</b> queries blocked · ${esc(windowLabel(data))}`)}>${ic("shieldx")}${clip(b.name)} <b>${fN(b.queries)}</b></span>`,
     )
     .join("");
   const fwChip = fw
@@ -712,12 +780,12 @@ function hostPage(data) {
         .map((s) => {
           const bytes = (s.download_bytes || 0) + (s.upload_bytes || 0);
           const color = CATC[s.category] || "#64748b";
-          return `<div class="row siterow">${letterIcon(s.name, s.category)}<div class="nm">${esc(s.name)}</div><span class="cat"><i style="background:${color}"></i>${esc(s.category || "Other")}</span>${stack(s.download_bytes || 0, s.upload_bytes || 0, max)}<div class="val">${fBytes(bytes)}</div></div>`;
+          return `<div class="row siterow">${letterIcon(s.name, s.category)}<div class="nm">${clip(s.name)}</div><span class="cat" title="${esc(s.category || "Other")}"><i style="background:${color}"></i>${esc(s.category || "Other")}</span>${stack(s.download_bytes || 0, s.upload_bytes || 0, max)}<div class="val">${fBytes(bytes)}</div></div>`;
         })
         .join("") || `<div class="note">No site names in this window.</div>`
     }</div><div style="margin-top:16px;padding-top:14px;border-top:1px solid #1c2433"><h3 style="margin-bottom:10px;font-size:13px"><span>Blocked <span class="h3s">— ${who}</span></span></h3><div class="blk">${tags}${fwChip}${none}</div></div></div></div>` +
     `<div class="grid"><div class="card"><h3>By category</h3><div class="donut"><svg width="140" height="140" viewBox="0 0 140 140" style="flex:none"><circle cx="70" cy="70" r="52" fill="none" stroke="#1c2433" stroke-width="16"/>${segs}<text x="70" y="68" text-anchor="middle" fill="#e6ebf3" font-size="18" font-weight="650" class="num">${esc(num)}</text><text x="70" y="86" text-anchor="middle" fill="#8b96a8" font-size="11">${esc(unit)}</text></svg><div class="dleg">${catArr.map(([c, v]) => `<div><i style="background:${CATC[c] || "#64748b"}"></i><span>${esc(c)}<small>${fBytes(v)}</small></span><span class="pc">${((100 * v) / denom).toFixed(0)}%</span></div>`).join("") || `<div class="note">No categories.</div>`}</div></div></div>` +
-    `<div class="card"><h3><span>Throughput <span class="h3s">— ${esc(windowLabel(data))}</span></span></h3><div class="statline"><b>${total == null ? "—" : fMbps(mbps(total, data.window.seconds))}</b><span>average</span></div><div class="chart" id="hthr"></div></div>` +
+    `<div class="card"><h3><span>Throughput <span class="h3s">— ${esc(windowLabel(data))}</span></span></h3><div class="statline"><b>${total == null ? "—" : fMbps(mbps(total, data.window.seconds))}</b><span>average</span></div>${chartBox("hthr", 150)}</div>` +
     `<div class="card" style="padding:14px 20px"><div class="note" style="margin:0">${esc(data.site_note || "")} <a href="#/dns">DNS for this host →</a></div></div></div></div>` +
     foot(data)
   );
@@ -768,11 +836,11 @@ function firewallPage(data) {
     : `<span class="chip t">no spikes</span>`;
   return (
     topbar({ title: "Firewall", health: healthLine(data.health), data }) +
-    `<div class="kpis">${kpi("shieldx", "c-coral", "Blocked", data.blocked == null ? "—" : fN(data.blocked), `${pct == null ? "" : `${pct}% of connections · `}${esc(windowLabel(data))}`)}${kpi("swap", "c-teal", "Allowed", data.allowed == null ? "—" : fN(data.allowed), esc(windowLabel(data)))}${kpi("rule", "c-violet", "Top rule", esc(ruleTitle), ruleSub)}</div>` +
-    `<div class="card" style="margin-bottom:16px"><h3><span>Blocks over time <span class="h3s">— ${esc(windowLabel(data))}</span></span>${chip}</h3><div class="chart" id="fwc"></div></div>` +
+    `<div class="kpis">${kpi("shieldx", "c-coral", "Blocked", data.blocked == null ? "—" : fN(data.blocked), `${pct == null ? "" : `${pct}% of connections · `}${esc(windowLabel(data))}`)}${kpi("swap", "c-teal", "Allowed", data.allowed == null ? "—" : fN(data.allowed), esc(windowLabel(data)))}${kpi("rule", "c-violet", "Top rule", esc(ruleTitle), ruleSub, ruleTitle)}</div>` +
+    `<div class="card" style="margin-bottom:16px"><h3><span>Blocks over time <span class="h3s">— ${esc(windowLabel(data))}</span></span>${chip}</h3>${chartBox("fwc", 230)}</div>` +
     `<div class="grid split even"><div class="card"><h3>Top blocked sources</h3><div class="rows">${sources
       .map((s) => {
-        const inner = `<span class="sdot" style="background:${s.count && sources[0] && s.id === sources[0].id ? "var(--coral)" : "var(--dim)"}"></span><div class="nm">${esc(s.name)}</div><span class="ip">${esc(s.ip)}</span><div class="bar"><i class="b" style="width:${(100 * s.count) / smax}%" ${tipAttr(`${esc(s.name)}<br><b>${fInt(s.count)}</b> blocked`)}></i></div><div class="val">${fN(s.count)}</div><div class="chev">${ic("chev", 'width="14" height="14"')}</div>`;
+        const inner = `<span class="sdot" style="background:${s.count && sources[0] && s.id === sources[0].id ? "var(--coral)" : "var(--dim)"}"></span><div class="nm">${clip(s.name)}</div><span class="ip">${clip(s.ip)}</span><div class="bar"><i class="b" style="width:${(100 * s.count) / smax}%" ${tipAttr(`${esc(s.name)}<br><b>${fInt(s.count)}</b> blocked`)}></i></div><div class="val">${fN(s.count)}</div><div class="chev">${ic("chev", 'width="14" height="14"')}</div>`;
         return s.link && s.id
           ? `<a class="row click srcrow" href="#/host/${encodeURIComponent(s.id)}">${inner}</a>`
           : `<div class="row srcrow">${inner}</div>`;
@@ -785,7 +853,7 @@ function firewallPage(data) {
     )
       .map(
         (d) =>
-          `<div class="row dstrow" ${tipAttr(`${esc(d.name)} · ${esc(d.protocol)} ${esc(d.port)}<br>${esc(d.label)}<br><b>${fInt(d.count)}</b> blocked`)}><span class="dsti">${ic("target")}</span><div class="nm"><span class="mono">${esc(d.name)}</span><small>${esc(d.label || "")}</small></div><span class="chip v">${esc(d.protocol)}</span><span class="chip">${esc(d.port)}</span><div class="val">${fN(d.count)}</div></div>`,
+          `<div class="row dstrow" ${tipAttr(`${esc(d.name)} · ${esc(d.protocol)} ${esc(d.port)}<br>${esc(d.label)}<br><b>${fInt(d.count)}</b> blocked`)}><span class="dsti">${ic("target")}</span><div class="nm">${clip(d.name, "mono")}<small>${clip(d.label || "")}</small></div><span class="chip v">${esc(d.protocol)}</span><span class="chip">${esc(d.port)}</span><div class="val">${fN(d.count)}</div></div>`,
       )
       .join(
         "",
@@ -823,11 +891,11 @@ function dnsPage(data) {
   return (
     topbar({ title: "DNS", health: healthLine(data.health), data }) +
     `<div class="kpis">${kpi("globe", "c-teal", "Queries", queries == null ? "—" : fN(queries), esc(windowLabel(data)))}<div class="card kpi"><div class="ki c-coral">${ic("shieldx")}</div><div><div class="kl">Blocked</div><div class="kv num" style="color:var(--coral)">${pct === "—" ? "—" : `${pct}%`}</div><div class="ks">${blockedN == null ? "—" : fN(blockedN)} queries</div></div></div>${kpi("layers", "c-violet", "Unique domains", data.unique_domains == null ? "—" : fInt(data.unique_domains), esc(windowLabel(data)))}</div>` +
-    `<div class="card" style="margin-bottom:16px"><h3><span>Queries over time <span class="h3s">— ${esc(windowLabel(data))}</span></span><span class="legend"><span><i style="background:var(--teal)"></i>Answered</span><span><i style="background:var(--coral)"></i>Pi-hole blocked</span></span></h3><div class="chart" id="dnsc"></div></div>` +
+    `<div class="card" style="margin-bottom:16px"><h3><span>Queries over time <span class="h3s">— ${esc(windowLabel(data))}</span></span><span class="legend"><span><i style="background:var(--teal)"></i>Answered</span><span><i style="background:var(--coral)"></i>Pi-hole blocked</span></span></h3>${chartBox("dnsc", 190)}</div>` +
     `<div class="grid split even"><div class="card"><h3>Top domains</h3><div class="rows">${domains
       .map((d, i) => {
         const color = CATC[d.category] || "#64748b";
-        return `<div class="row lrow"><span class="rank">${i + 1}</span><div class="nm" style="display:flex;align-items:center;gap:10px"><span class="letter" style="background:${color};width:20px;height:20px;font-size:10px">${esc(d.name[0].toUpperCase())}</span>${esc(d.name)}</div><div class="bar"><i class="d" style="width:${(100 * d.queries) / dmax}%" ${tipAttr(`${esc(d.name)}<br><b>${fInt(d.queries)}</b> queries`)}></i></div><div class="val">${d.queries < 1e4 ? fInt(d.queries) : fN(d.queries)}</div></div>`;
+        return `<div class="row lrow"><span class="rank">${i + 1}</span><div class="nm dn"><span class="letter" style="background:${color};width:20px;height:20px;font-size:10px">${esc(d.name[0].toUpperCase())}</span>${clip(d.name)}</div><div class="bar"><i class="d" style="width:${(100 * d.queries) / dmax}%" ${tipAttr(`${esc(d.name)}<br><b>${fInt(d.queries)}</b> queries`)}></i></div><div class="val">${d.queries < 1e4 ? fInt(d.queries) : fN(d.queries)}</div></div>`;
       })
       .join("")}</div></div>` +
     `<div class="card"><h3><span>Top clients</span><span class="h3s" style="font-size:12px">blocked %</span></h3><div class="rows">${(
@@ -837,7 +905,7 @@ function dnsPage(data) {
         const p = c.queries ? (100 * c.blocked) / c.queries : 0;
         const klass = p > 5 ? "c" : "t";
         const soft = p <= 15 && p > 5 ? "opacity:.75" : "";
-        const inner = `<div class="ic">${ic(c.icon)}</div><div class="nm">${esc(c.name)}<small class="num">${esc(c.ip)}</small></div><div class="val">${fN(c.queries)}</div><span class="chip ${klass}" style="justify-self:end;${soft}" ${tipAttr(`${esc(c.name)}: ${fInt(c.blocked)} of ${fInt(c.queries)} queries blocked`)}>${ic("shield")}${p.toFixed(1)}%</span><div class="chev">${ic("chev", 'width="14" height="14"')}</div>`;
+        const inner = `<div class="ic">${ic(c.icon)}</div><div class="nm">${clip(c.name)}<small class="num">${clip(c.ip)}</small></div><div class="val">${fN(c.queries)}</div><span class="chip ${klass}" style="justify-self:end;${soft}" ${tipAttr(`${esc(c.name)}: ${fInt(c.blocked)} of ${fInt(c.queries)} queries blocked`)}>${ic("shield")}${p.toFixed(1)}%</span><div class="chev">${ic("chev", 'width="14" height="14"')}</div>`;
         return c.link && c.id
           ? `<a class="row click clrow" href="#/host/${encodeURIComponent(c.id)}">${inner}</a>`
           : `<div class="row clrow">${inner}</div>`;
@@ -851,7 +919,7 @@ function alertsPage(alerts) {
   const rows = open
     .map(
       (item) =>
-        `<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div class="nm">${esc(item.summary || item.subject)}<small>${esc(item.severity || "")} · ${esc(item.subject || "")}</small></div><div class="val">${esc(item.state || "")}</div></div>`,
+        `<div class="row" style="grid-template-columns:minmax(0,1fr) auto;min-width:0"><div class="nm">${clip(item.summary || item.subject)}<small>${clip(`${item.severity || ""} · ${item.subject || ""}`)}</small></div><div class="val">${esc(item.state || "")}</div></div>`,
     )
     .join("");
   return (
@@ -893,6 +961,10 @@ function pageHtml(route, body) {
   return settingsPage();
 }
 function render() {
+  if (chartObserver) {
+    chartObserver.disconnect();
+    chartObserver = null;
+  }
   chartReg = [];
   hideTip();
   const app = document.getElementById("app");
@@ -919,8 +991,7 @@ function render() {
       `<div class="card empty">Loading…</div>`;
   } else html = pageHtml(route, state.view.body);
   app.innerHTML = `<nav class="sb">${sidebar(active)}</nav><main>${html}</main>`;
-  drawCharts();
-  requestAnimationFrame(drawCharts);
+  bindChartResize();
 }
 
 document.addEventListener("click", (e) => {
@@ -966,11 +1037,9 @@ addEventListener("hashchange", () => {
   scrollTo(0, 0);
   show();
 });
-let resizeTimer;
-addEventListener("resize", () => {
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(drawCharts, 80);
-});
+if (typeof ResizeObserver !== "function")
+  addEventListener("resize", () => scheduleChartDraw());
+watchResolution();
 setInterval(() => {
   if (!document.hidden && !state.login) {
     cache.clear();
