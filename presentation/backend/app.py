@@ -56,7 +56,7 @@ def logout(request:Request):
     if not viewer:raise HTTPException(404,'Viewer sign-in is not configured in this demo')
     same_origin(request);request.session.clear()
     return {'authenticated':False}
-VERSION='0.5.1'
+VERSION='0.5.2'
 def _anchor(end):
     anchor=end or datetime.now(timezone.utc).replace(second=0,microsecond=0)
     if anchor.tzinfo is None:raise HTTPException(422,'A timezone is required')
