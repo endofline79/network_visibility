@@ -161,6 +161,19 @@ main {
   min-width: 0;
   max-width: none;
 }
+main.pending {
+  opacity: 0.5;
+  transition: opacity 0.12s linear;
+  pointer-events: none;
+}
+main.pending .pill {
+  pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  main.pending {
+    transition: none;
+  }
+}
 .top {
   display: flex;
   align-items: flex-start;

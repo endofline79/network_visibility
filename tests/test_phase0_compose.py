@@ -14,6 +14,9 @@ class Phase0ComposeTests(unittest.TestCase):
         self.assertIn('-memory.allowedBytes=3GiB', compose)
         self.assertNotIn('-memory.allowedBytes=1GiB', compose)
         self.assertIn('mem_limit: 4g', compose)
+        logs = compose.split('\n  dashboard:', 1)[0]
+        self.assertIn('\n    cpus: 4.0\n', logs)
+        self.assertNotIn('cpus: 2.0', logs)
         self.assertIn('memswap_limit: 4g', compose)
         self.assertIn('\n  filterlog-relay:\n', compose)
         self.assertIn('\n  alerter:\n', compose)
@@ -30,7 +33,7 @@ class Phase0ComposeTests(unittest.TestCase):
             self.assertIn('PLANNER_MODEL: visibility-planner', text)
             self.assertIn('LLM_BASE_URL: http://172.17.0.1:8081/v1', text)
             self.assertIn('--parallel 1', text)
-        self.assertIn('visibility-console:0.5.1', live)
+        self.assertIn('visibility-console:0.5.2', live)
         self.assertIn('PRESENTATION_MODE: live', live)
         self.assertIn('docker compose -f deploy/compose.live.yaml up -d', live)
         self.assertNotIn('bearer_token', live.lower())

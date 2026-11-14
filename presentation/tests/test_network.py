@@ -199,7 +199,7 @@ class Routes(unittest.TestCase):
         self.assertTrue(any(host["id"] == "apple-tv" for host in body["hosts"]))
         self.assertGreater(len(body["throughput"]["points"]), 2)
         self.assertIn("bytes", body["throughput"]["points"][0])
-        self.assertEqual(self.client.get("/api/health").json()["version"], "0.5.1")
+        self.assertEqual(self.client.get("/api/health").json()["version"], "0.5.2")
 
     def test_host_keeps_blocked_sites_off_the_bars(self):
         response = self.client.get("/api/network/host/apple-tv", params={"range": "24h"})
