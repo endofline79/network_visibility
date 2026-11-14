@@ -42,6 +42,7 @@ jobs:
           npm --prefix frontend ci --ignore-scripts --no-audit --no-fund
           node tests/chart_fit_unit.mjs
           node tests/map_history_unit.cjs
+          node tests/console_swr_unit.mjs
           npm --prefix frontend run format:check
           npm --prefix frontend run build
 
