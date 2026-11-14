@@ -21,7 +21,7 @@ const base = process.env.PREVIEW_URL || "http://127.0.0.1:8096";
     page.on("request", (r) => {
       if (!r.url().startsWith(base)) external.push(r.url());
     });
-    await page.goto(base);
+    await page.goto(base + "/legacy");
     const view = page.locator(".world-view"),
       viewport = view.locator(".map-viewport"),
       svg = viewport.locator("svg");
@@ -185,7 +185,7 @@ const base = process.env.PREVIEW_URL || "http://127.0.0.1:8096";
       reducedMotion: "reduce",
     });
     mobile.on("pageerror", (e) => errors.push(e.message));
-    await mobile.goto(base);
+    await mobile.goto(base + "/legacy");
     const mv = mobile.locator(".world-view"),
       vp = mv.locator(".map-viewport");
     await mv.locator(".map-marker").first().waitFor();

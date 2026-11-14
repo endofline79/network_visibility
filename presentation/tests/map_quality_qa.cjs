@@ -123,7 +123,7 @@ const base = process.env.PREVIEW_URL || "http://127.0.0.1:8096";
         lv.endpoints = count;
         await page.route("**/api/overview?*", (r) => r.fulfill({ json: ov }));
         await page.route("**/api/globe?*", (r) => r.fulfill({ json: lv }));
-        await page.goto(base);
+        await page.goto(base + "/legacy");
         const view = page.locator(".world-view");
         await view.getByRole("button", { name: mode, exact: true }).click();
         await page.waitForTimeout(100);

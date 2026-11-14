@@ -56,7 +56,61 @@ def logout(request:Request):
     if not viewer:raise HTTPException(404,'Viewer sign-in is not configured in this demo')
     same_origin(request);request.session.clear()
     return {'authenticated':False}
-VERSION='0.4.3'
+VERSION='0.5.0'
+def _anchor(end):
+    anchor=end or datetime.now(timezone.utc).replace(second=0,microsecond=0)
+    if anchor.tzinfo is None:raise HTTPException(422,'A timezone is required')
+    anchor=anchor.astimezone(timezone.utc)
+    if (anchor-datetime.now(timezone.utc)).total_seconds()>60:raise HTTPException(422,'Future windows are unavailable')
+    if (datetime.now(timezone.utc)-anchor).total_seconds()>30*86400:raise HTTPException(422,'Window exceeds retention')
+    return anchor
+_RANGE_SECONDS={'1h':3600,'24h':86400,'7d':604800}
+@app.get('/api/network/overview')
+def network_overview(range:Literal['1h','24h','7d']='24h',end:datetime|None=None):
+    anchor=_anchor(end);seconds=_RANGE_SECONDS[range]
+    if MODE=='demo':
+        from .network_demo import demo_overview
+        return demo_overview(anchor,seconds)
+    from .network import Directory,live_overview
+    from .service import service
+    try:return live_overview(service.client,anchor,seconds,Directory.from_sources(host_cache))
+    except Exception:raise HTTPException(503,'Network overview cannot be validated right now') from None
+@app.get('/api/network/host/{host_id}')
+def network_host(host_id:str,range:Literal['1h','24h','7d']='24h',end:datetime|None=None):
+    if not host_id or len(host_id)>80 or not all(ch.isalnum() or ch in '-_.' for ch in host_id):
+        raise HTTPException(404,'Host was not found')
+    anchor=_anchor(end);seconds=_RANGE_SECONDS[range];host_id=host_id.lower()
+    if MODE=='demo':
+        from .network_demo import demo_host
+        payload=demo_host(anchor,seconds,host_id)
+        if payload is None:raise HTTPException(404,'Host was not found')
+        return payload
+    from .network import Directory,live_host
+    from .service import service
+    record=Directory.from_sources(host_cache).resolve(host_id)
+    if record is None:raise HTTPException(404,'Host was not found')
+    try:return live_host(service.client,anchor,seconds,record)
+    except Exception:raise HTTPException(503,'Host view cannot be validated right now') from None
+@app.get('/api/network/firewall')
+def network_firewall(range:Literal['1h','24h','7d']='24h',end:datetime|None=None):
+    anchor=_anchor(end);seconds=_RANGE_SECONDS[range]
+    if MODE=='demo':
+        from .network_demo import demo_firewall
+        return demo_firewall(anchor,seconds)
+    from .network import Directory,live_firewall
+    from .service import service
+    try:return live_firewall(service.client,anchor,seconds,Directory.from_sources(host_cache))
+    except Exception:raise HTTPException(503,'Firewall view cannot be validated right now') from None
+@app.get('/api/network/dns')
+def network_dns(range:Literal['1h','24h','7d']='24h',end:datetime|None=None):
+    anchor=_anchor(end);seconds=_RANGE_SECONDS[range]
+    if MODE=='demo':
+        from .network_demo import demo_dns
+        return demo_dns(anchor,seconds)
+    from .network import Directory,live_dns
+    from .service import service
+    try:return live_dns(service.client,anchor,seconds,Directory.from_sources(host_cache))
+    except Exception:raise HTTPException(503,'DNS view cannot be validated right now') from None
 @app.get('/api/health')
 def health():return {'status':'ok','mode':MODE,'version':VERSION}
 @app.get('/api/overview',response_model=Overview)
@@ -156,3 +210,8 @@ if STATIC.exists():
     app.mount('/assets',StaticFiles(directory=STATIC/'assets'),name='assets')
     @app.get('/')
     def index():return FileResponse(STATIC/'index.html')
+    @app.get('/legacy')
+    def legacy_page():
+        page=STATIC/'legacy.html'
+        if not page.exists():raise HTTPException(404,'The previous console is not built')
+        return FileResponse(page)

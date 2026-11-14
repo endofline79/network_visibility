@@ -30,6 +30,11 @@ assert c.get('/api/planner').status_code==401
 assert c.get('/api/alerts').status_code==401
 assert c.get('/api/ops').status_code==401
 assert c.get('/api/destinations').status_code==401
+assert c.get('/api/network/overview').status_code==401
+assert c.get('/api/network/firewall').status_code==401
+assert c.get('/api/network/dns').status_code==401
+assert c.get('/api/network/host/ai-02').status_code==401
+assert c.post('/api/network/overview',json={}).status_code==405
 assert c.post('/api/alerts',json={}).status_code==405
 assert c.post('/api/ops',json={}).status_code==405
 assert c.post('/api/destinations',json={}).status_code==405

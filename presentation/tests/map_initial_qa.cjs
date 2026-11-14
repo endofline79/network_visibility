@@ -20,7 +20,7 @@ const fs = require("node:fs"),
     p.on("request", (r) => {
       if (!r.url().startsWith(base)) external.push(r.url());
     });
-    await p.goto(base);
+    await p.goto(base + "/legacy");
     await p.getByRole("heading", { name: "External traffic map" }).waitFor();
     await p.locator(".map-marker").first().waitFor();
     await p

@@ -34,7 +34,7 @@ const url = process.env.PREVIEW_URL || 'http://127.0.0.1:8096';
         fixture.metrics.destinations = null;
         fixture.countries = [];
       }
-      await page.goto(url);
+      await page.goto(url + "/legacy");
       await page.getByText('Check updates', {exact:true}).waitFor();
       assert.equal(await page.getByText('Receiving data', {exact:true}).count(), 0, name);
       assert.equal(await page.getByText('No monitoring alerts', {exact:true}).count(), 0, name);
@@ -44,7 +44,7 @@ const url = process.env.PREVIEW_URL || 'http://127.0.0.1:8096';
     fixture.mode = 'live';
     fixture.metrics.capture_bytes = 0;
     fixture.metrics.busiest = null;
-    await page.goto(url);
+    await page.goto(url + "/legacy");
     await page.getByText('Receiving data', {exact:true}).waitFor();
     await page.getByText('No monitoring alerts', {exact:true}).waitFor();
     assert.deepEqual(errors, []);

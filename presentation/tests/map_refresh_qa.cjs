@@ -42,7 +42,7 @@ const base = process.env.PREVIEW_URL || "http://127.0.0.1:8096";
           : { json: seed },
       );
     });
-    await page.goto(base);
+    await page.goto(base + "/legacy");
     const view = page.locator(".world-view"),
       vp = view.locator(".map-viewport");
     await view.locator(".map-marker").waitFor();
@@ -205,7 +205,7 @@ const base = process.env.PREVIEW_URL || "http://127.0.0.1:8096";
     fixture.endpoints = 3;
     await aging.route("**/api/globe?*", (r) => r.fulfill({ json: fixture }));
     await aging.clock.install();
-    await aging.goto(base);
+    await aging.goto(base + "/legacy");
     const av = aging.locator(".world-view");
     await av.locator(".map-marker").waitFor();
     assert.equal(await countryTotal(aging), 3);
