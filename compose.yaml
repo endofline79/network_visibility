@@ -1,7 +1,8 @@
 # AI-02 stack. VictoriaLogs memory matches the 2026-11-01 live bump
 # (3GiB allowedBytes, 4g container, no swap headroom). filterlog-relay parses
-# filterlog on :1515; OPNsense also still forwards all programs to :514 until
-# the final trim cutover. See docs/phase0-planner-prep.md.
+# filterlog on :1515; OPNsense :514 excludes facility local0 (filterlog) so
+# non-filterlog system logs flow to :514 without double-storing filterlog.
+# See docs/phase0-planner-prep.md.
 name: visibility
 
 services:
@@ -224,9 +225,10 @@ services:
         max-size: "5m"
         max-file: "2"
 
-  # Parses filterlog before insert. OPNsense still sends to logs :514.
+  # Parses filterlog before insert. OPNsense sends filterlog here (:1515) and
+  # all non-local0 facilities (cron, syslog-ng, dnsmasq-dhcp, etc.) to logs :514.
   # Port 1515 avoids 514 (VictoriaLogs) and 1514 (disabled telemetry-alloy target).
-  # Repointing OPNsense requires an explicit OK. See docs/phase0-planner-prep.md.
+  # See docs/phase0-planner-prep.md.
   filterlog-relay:
     image: visibility-filterlog-relay:0.1.0
     build:

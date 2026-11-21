@@ -202,11 +202,11 @@ OPNsense-style RFC5424/filterlog messages. They expire under normal retention.
 
 ## OPNsense source — connected
 
-Under **System > Settings > Logging**, the remote destination **AI-02 Visibility**
-is enabled. It reuses UUID `ad8bb8eb-1abc-4a3d-9d2c-8f36577da137`, previously the
-disabled `telemetry-alloy` target on port 1514. Do not add another destination
-that forwards every program. A filterlog-only relay on port 1515 is in
-`compose.yaml` but is **not** the live OPNsense target. See
+Under **System > Settings > Logging**, two remote destinations are enabled:
+**AI-02 Visibility** (UUID `ad8bb8eb-1abc-4a3d-9d2c-8f36577da137`, port `514`,
+all non-`local0` facilities for system/DHCP/gateway/auth logs) and
+**AI-02 filterlog-relay** (UUID `81dbb23c-afc9-451a-bc91-6f863e55a611`, port
+`1515`, program `filterlog` only, parsed before VictoriaLogs insert). See
 [Phase 0 planner prep](docs/phase0-planner-prep.md) before any syslog change.
 
 | Setting | Value |
@@ -214,9 +214,9 @@ that forwards every program. A filterlog-only relay on port 1515 is in
 | Sender | `192.168.5.1` / `OPNsense.internal` |
 | Transport | TCP/IPv4 |
 | Destination | `192.168.5.230` |
-| Port | `514` |
+| Ports | `514` (all non-`local0` facilities) and `1515` (`filterlog` via `filterlog-relay`) |
 | Format | RFC5424/IETF |
-| Application, severity, facility filters | Empty: forward all currently generated events |
+| Filters | `:514` excludes facility `local0` (`filterlog`); `:1515` selects program `filterlog` |
 | Local logging | Kept enabled; existing local retention unchanged |
 
 Only events actually generated are forwarded. Allowed traffic needs logging on

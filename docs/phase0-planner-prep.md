@@ -82,31 +82,36 @@ time, and raw message so a mistaken full-stream cutover does not drop cron or
 syslog-ng. The supported cutover is filterlog only.
 
 Bringing the compose service up does **not** change OPNsense. On AI-02, the
-filterlog-only `:1515` OPNsense destination was subsequently enabled alongside
-`:514` (dual-store phase). Console and alerter `filterlog` queries filter on
-`action:=block` / `action:=pass` so dual-stored rows are not double-counted
-until `:514` stops forwarding `filterlog`.
+filterlog-only `:1515` OPNsense destination was enabled on 2026-11-01, and on
+2026-11-20 `:514` (`ad8bb8eb-1abc-4a3d-9d2c-8f36577da137`) was trimmed via
+`scripts/opnsense_trim_514.py` to exclude facility `local0` (`filterlog`) while
+keeping all 22 non-`local0` facilities forwarding to `:514`. Console and alerter
+`filterlog` queries continue to filter on `action:=block` / `action:=pass` so
+historical dual-stored rows within the 30-day retention window are never
+double-counted.
 
-### Cutover (needs Kevin's OK — not done)
+### Cutover (completed on AI-02)
 
 1. Deploy `filterlog-relay` and confirm it is listening (`ss -lnt` shows
-   `192.168.5.230:1515`, container healthcheck passes). Do not send production
-   firewall logs at it until the next steps are approved.
+   `192.168.5.230:1515`, container healthcheck passes).
 2. Add a **new** OPNsense syslog destination, TCP/IPv4, RFC5424, host
-   `192.168.5.230`, port `1515`, program filter `filterlog` only. Leave the
-   existing destination UUID `ad8bb8eb-1abc-4a3d-9d2c-8f36577da137`
-   ("AI-02 Visibility", all programs, port 514) in place.
+   `192.168.5.230`, port `1515`, program filter `filterlog` only (`81dbb23c-afc9-451a-bc91-6f863e55a611`).
 3. Confirm new VictoriaLogs rows for `app_name:=filterlog` have `action`, `src`,
    and `dst` populated, with the same `hostname` and `app_name` stream fields.
    Older rows stay raw CSV in `_msg`.
-4. While both destinations include filterlog, those rows are stored twice.
-   After the relay looks right, stop the original destination from also
-   forwarding the `filterlog` program. Do not disable the original destination
-   outright; syslog-ng and cron still use `:514`.
-5. `scripts/opnsense_forwarding.py` only knows that one all-programs UUID. Do
-   not change its port to 1515. Its `rollback` action restores the disabled
-   port-1514 target and stops forwarding. It is not the relay rollback.
-   API calls verify TLS against the pinned Home Management CA 2026
+4. Trim `:514` (`scripts/opnsense_trim_514.py apply`) so the original
+   destination excludes `local0` (`filterlog`) without disabling `:514` or
+   dropping core non-filterlog streams (`/usr/sbin/cron`, `syslog-ng`,
+   `sshd-session`, `sudo`, `dhclient`, `configd.py`, `dnsmasq-dhcp`, `dpinger`,
+   `hostwatch`). OPNsense's `program` dropdown omits `cron`, `syslog-ng`,
+   `sshd-session`, `sudo`, and `dhclient`, whereas `filterlog` logs exclusively
+   on facility `local0`, so filtering by all 22 non-`local0` facilities preserves
+   every other stream cleanly. Rollback state lives at
+   `state/opnsense-trim-514.json` (`opnsense_trim_514.py rollback`).
+5. `scripts/opnsense_forwarding.py` only knows that one `:514` UUID. Do not
+   change its port to 1515. Its `rollback` action restores the disabled
+   port-1514 target and stops forwarding (it requires rolling back `:514` trim
+   first). API calls verify TLS against the pinned Home Management CA 2026
    (SHA-256 `01132d772629f56e04cf18609409bceed0ac35af20b9959f78be2c20f1c142e0`).
    Point `OPNSENSE_CA_FILE` or `SSL_CERT_FILE` at that public CA PEM. If neither
    is set, the script reads `~/.local/share/visibility/pki/home-management-ca-2026.pem`.
@@ -114,11 +119,11 @@ until `:514` stops forwarding `filterlog`.
 6. `scripts/opnsense_filterlog_relay.py` is the filterlog-only helper. It adds,
    inspects, or removes one destination: TCP/IPv4, RFC5424, `192.168.5.230:1515`,
    program `filterlog`. It uses the same pinned CA and never edits the `:514`
-   UUID. While both destinations include filterlog, those rows are stored
-   twice. That double-store stays until a later cutover; do not trim `:514` here.
-7. Relay rollback: remove or disable the filterlog-only destination first
+   UUID.
+7. Full relay rollback: restore `:514` to all facilities first
+   (`opnsense_trim_514.py rollback`), then remove the filterlog-only destination
    (`opnsense_filterlog_relay.py rollback`), then `docker compose stop filterlog-relay`.
-   Port 514 keeps ingesting raw filterlog.
+   Port 514 resumes ingesting raw filterlog.
 
 Optional `RELAY_ALLOW_FROM` can limit peers. Loopback stays allowed so the
 container healthcheck works. Docker's published-port source address is not a
