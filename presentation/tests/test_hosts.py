@@ -12,6 +12,7 @@ from backend.hosts import (
     DHCP_GAP,
     HostCache,
     merge_hosts,
+    normalize_dhcp,
     normalize_mac,
     parse_iot_hosts,
     _unique,
@@ -38,10 +39,16 @@ class FakeQueries:
         self.unifi = [
             {'mac': 'AA:BB:CC:DD:EE:01', 'ip': '192.168.5.20', 'name': 'UniFi phone', 'seen': '2026-11-01T21:00:00Z'},
             {'mac': 'aa:bb:cc:dd:ee:02', 'ip': '192.168.5.21', 'name': 'Camera', 'seen': '2026-11-01T21:00:01Z'},
+            {'mac': 'aa:bb:cc:dd:ee:50', 'ip': '10.10.20.10', 'name': 'USW Flex 2.5G 8 PoE', 'kind': 'switch', 'seen': '2026-11-01T21:00:01Z'},
+        ]
+        self.dhcp = [
+            {'_msg': 'DHCPACK(bridge0) 10.10.20.10 aa:bb:cc:dd:ee:50 unifi-flex', 'seen': '2026-11-01T20:00:00Z'},
+            {'_msg': 'DHCPACK(igc1) 192.168.5.60 aa:bb:cc:dd:ee:60 wired-nas', 'seen': '2026-11-01T21:00:00Z'},
         ]
         self.pihole = [
             {'client_ip': '192.168.5.20', 'name': 'pihole-phone', 'seen': '2026-11-01T21:00:02Z'},
             {'client_ip': '192.168.5.30', 'name': 'Only Pihole', 'seen': '2026-11-01T21:00:03Z'},
+            {'client_ip': '192.168.5.60', 'name': 'pihole-nas', 'seen': '2026-11-01T21:00:04Z'},
         ]
 
     def query(self, query, deadline):
@@ -49,6 +56,8 @@ class FakeQueries:
             raise RuntimeError('CANARY-SECRET')
         if 'unifi-snapshot' in query:
             return self.unifi
+        if 'dnsmasq-dhcp' in query:
+            return self.dhcp
         if 'pihole-dns' in query:
             return self.pihole
         raise AssertionError(query)
@@ -86,6 +95,11 @@ class HostCacheTests(unittest.TestCase):
         self.assertEqual((camera['name'], camera['source']), ('Camera', 'unifi'))
         named = cache.lookup(ip='192.168.5.30')
         self.assertEqual((named['name'], named['source']), ('Only Pihole', 'pihole'))
+        switch = cache.lookup(ip='10.10.20.10')
+        self.assertEqual((switch['name'], switch['source'], switch['class']), ('USW Flex 2.5G 8 PoE', 'unifi', 'switch'))
+        wired = cache.lookup(ip='192.168.5.60')
+        self.assertEqual((wired['name'], wired['source'], wired['mac']), ('wired-nas', 'dhcp', 'aa:bb:cc:dd:ee:60'))
+        self.assertEqual(view['sources']['dhcp']['state'], 'ok')
         declared = cache.lookup(ip='192.0.2.10')
         self.assertEqual(declared['name'], 'Handset')
         self.assertNotIn('CANARY', json.dumps(view))
@@ -176,6 +190,25 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(ambiguous, [])
         self.assertEqual(hosts[0]['source'], 'unifi')
         self.assertEqual(hosts[0]['name'], 'Camera')
+
+    def test_normalize_dhcp_and_ambiguity_with_dhcp(self):
+        leases, note = normalize_dhcp([
+            {'_msg': 'DHCPACK(bridge0) 10.10.20.11 aa:bb:cc:dd:ee:51 unifi-kitchen', 'seen': '2026-11-20T20:04:25Z'},
+            {'_msg': 'DHCPACK(bridge0) 10.10.20.99 aa:bb:cc:dd:ee:51 old-name', 'seen': '2026-11-20T19:00:00Z'},
+            {'_msg': 'no address range available for DHCP request via igc1', 'seen': '2026-11-20T20:05:00Z'},
+        ])
+        self.assertEqual(len(leases), 1)
+        self.assertEqual(leases[0]['ip'], '10.10.20.11')
+        self.assertEqual(leases[0]['name'], 'unifi-kitchen')
+        self.assertIsNotNone(note)
+        hosts, ambiguous = merge_hosts(
+            [],
+            [{'mac': 'aa:bb:cc:dd:ee:10', 'ip': '192.168.5.70', 'name': 'One', 'seen': 't'}],
+            [],
+            dhcp=[{'mac': 'aa:bb:cc:dd:ee:11', 'ip': '192.168.5.70', 'name': 'Two', 'seen': 't'}],
+        )
+        self.assertEqual(ambiguous, ['192.168.5.70'])
+        self.assertTrue(all(host['ip'] is None for host in hosts))
 
 
 if __name__ == '__main__':

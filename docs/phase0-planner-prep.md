@@ -17,13 +17,11 @@ Tracked `compose.yaml` now matches the live VictoriaLogs budget:
 still have about a gibibyte.
 
 `compose.yaml` also includes the live `alerter` service (image
-`visibility-alerter:0.1.0`) and a new `filterlog-relay` service.
-`alerter/Dockerfile` and `alerter/rules.json` are **not in this git repo**.
-They already exist on the AI-02 checkout that is not a git working tree.
-Copying this `compose.yaml` onto that host keeps the running alerter build
-context. A fresh clone cannot `docker compose build alerter` until that source
-is added. Webhook URL and insert token stay in `*_FILE` mounts under
-`${VISIBILITY_SECRETS_DIR}`.
+`visibility-alerter:0.1.0`) and `filterlog-relay`. Both `alerter/` and
+`filterlog-relay/` are tracked in this repository. `alerter` bind-mounts both
+`dashboard.crt` (the 90-day console leaf certificate) and `dashboard-ca.crt`
+read-only for expiry monitoring. Webhook URL and insert token stay in `*_FILE`
+mounts under `${VISIBILITY_SECRETS_DIR}`.
 
 ## Live console overlay
 
@@ -83,8 +81,11 @@ Non-filterlog lines that reach the relay are inserted with hostname, app name,
 time, and raw message so a mistaken full-stream cutover does not drop cron or
 syslog-ng. The supported cutover is filterlog only.
 
-Bringing the compose service up does **not** change OPNsense. Until the cutover
-below, the relay is idle and `:514` ingest is unchanged.
+Bringing the compose service up does **not** change OPNsense. On AI-02, the
+filterlog-only `:1515` OPNsense destination was subsequently enabled alongside
+`:514` (dual-store phase). Console and alerter `filterlog` queries filter on
+`action:=block` / `action:=pass` so dual-stored rows are not double-counted
+until `:514` stops forwarding `filterlog`.
 
 ### Cutover (needs Kevin's OK — not done)
 
@@ -141,22 +142,25 @@ Merge order:
    file. An empty `hosts: []` file stays on the strict parser. At most 16 hosts.
    Values are checked before they can be reused in LogsQL; the cache queries
    themselves are fixed strings and do not interpolate the file.
-2. UniFi `app_name:=unifi-snapshot` clients from the last 15 minutes, keyed by
-   MAC. A hand entry with the same MAC keeps its name and also matches the
-   UniFi IP.
-3. Pi-hole `client_name` over the last hour, by client IP, only when no
+2. UniFi `app_name:=unifi-snapshot` clients and devices (`entity_kind:=client`
+   or `entity_kind:=device`) from the last 15 minutes, keyed by MAC. A hand
+   entry with the same MAC keeps its name and also matches the UniFi IP.
+3. OPNsense `app_name:=dnsmasq-dhcp` `DHCPACK` leases from the last 24 hours,
+   keyed by MAC, providing IP and hostname for DHCP-served wired/infra hosts
+   that UniFi does not list.
+4. Pi-hole `client_name` over the last hour, by client IP, only when no
    higher-priority source already has that IP.
 
 Refresh default is 300 seconds (`HOST_CACHE_REFRESH_SECONDS`). Live mode tries
 the `console-planner` token file first and then the console query token. A
 failed poll keeps the previous sample and marks the snapshot stale. Two UniFi
-MACs sharing one IP are listed as `ambiguous_ips` and are not given a single
-name.
+or DHCP MACs sharing one IP are listed as `ambiguous_ips` and are not given a
+single name.
 
-**Wired-client gap:** there is still no OPNsense DHCP lease or ARP feed in
-VictoriaLogs. UniFi only sees clients that pass its gear, and Pi-hole names are
-partial. Wired clients that appear in neither source stay unresolved until a
-later telemetry pull or an `iot-hosts.yaml` row.
+**Wired-client gap:** OPNsense `dnsmasq-dhcp` `DHCPACK` logs are read when
+present, but there is no full ARP table feed. Static or non-OPNsense-DHCP wired
+clients that appear in neither UniFi nor Pi-hole stay unresolved until an
+`iot-hosts.yaml` row is added.
 
 ## llama-swap alias
 

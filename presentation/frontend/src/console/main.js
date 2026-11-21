@@ -224,11 +224,13 @@ const state = {
   login: false,
   loginError: "",
   error: "",
+  mode: "",
   view: null,
   alerts: null,
 };
 const cache = new Map();
 let token = 0;
+let lastFetched = 0;
 let chartReg = [];
 let chartObserver = null;
 let dprMedia = null;
@@ -307,21 +309,21 @@ async function refreshAlerts() {
     if (state.login) throw err;
   }
 }
-async function show() {
+async function show(force = false) {
   const seq = ++token;
   const route = routeOf();
   state.error = "";
-  if (
+  const matches =
     state.view &&
     state.view.range === state.range &&
     state.view.id === route.id &&
-    (state.view.kind === route.kind || shared(state.view.kind, route.kind))
-  ) {
+    (state.view.kind === route.kind || shared(state.view.kind, route.kind));
+  if (!force && matches) {
     state.view = { ...state.view, kind: route.kind };
     render();
     return;
   }
-  render();
+  if (!force) render();
   try {
     if (route.kind === "settings") {
       await refreshAlerts();
@@ -330,14 +332,17 @@ async function show() {
     } else {
       const body = await cached(route.url);
       if (seq !== token) return;
+      if (body && body.mode) state.mode = body.mode;
       if (route.kind !== "alerts") await refreshAlerts();
       if (seq !== token) return;
       state.view = { kind: route.kind, range: state.range, id: route.id, body };
     }
+    if (state.alerts && state.alerts.mode) state.mode = state.alerts.mode;
+    lastFetched = Date.now();
     state.login = false;
   } catch (err) {
     if (seq !== token) return;
-    if (!state.login) {
+    if (!state.login && !force) {
       state.error = err.message || "This view is unavailable right now.";
       state.view = null;
     }
@@ -452,9 +457,13 @@ function drawChart(el, o) {
     const m = o.marker;
     const x = X(m.i);
     const y = Y(stacks[stacks.length - 1].hi[m.i]);
-    const boxW = S(92);
+    const textLen = Math.max(
+      String(m.t1 || "").length,
+      String(m.t2 || "").length,
+    );
+    const boxW = S(Math.max(92, Math.min(220, Math.ceil(textLen * 6.8) + 20)));
     const boxH = S(38);
-    let bx = x - pl > S(120) ? x - S(106) : x + S(14);
+    let bx = x - pl > boxW + S(28) ? x - boxW - S(14) : x + S(14);
     bx = Math.max(pl, Math.min(bx, W - pr - boxW));
     const by = Math.max(Math.min(y - S(6), H - pb - boxH), pt);
     g += `<line x1="${x}" x2="${x}" y1="${y}" y2="${pt + h}" stroke="${m.color}" stroke-width="${S(1)}" stroke-dasharray="${S(3)} ${S(3)}" opacity=".7"/><circle cx="${x}" cy="${y}" r="${S(4.5)}" fill="${m.color}" stroke="#0f1420" stroke-width="${S(2)}"/>`;
@@ -736,10 +745,13 @@ function hostPage(data) {
         `<div class="tl">${esc(fullTime(points[i].time))}</div><i style="background:#2dd4bf"></i>${fMbps(values[i])}`,
     });
   }
-  const dnsBlocked = (data.blocked || []).reduce(
-    (sum, item) => sum + (item.queries || 0),
-    0,
-  );
+  const dnsBlocked =
+    data.blocked_total != null
+      ? Number(data.blocked_total) || 0
+      : (data.blocked || []).reduce(
+          (sum, item) => sum + (item.queries || 0),
+          0,
+        );
   const fw = data.firewall_blocks || 0;
   const blockedTotal = dnsBlocked + fw;
   const blockedSub = fw
@@ -942,9 +954,14 @@ function alertsPage(alerts) {
   );
 }
 function settingsPage() {
+  const signOut =
+    state.mode === "live"
+      ? `<div class="card" style="margin-top:16px"><h3>Session</h3><p class="note" style="margin-top:0">Sign out of this viewer session on this browser.</p><p><button type="button" class="more" data-act="logout">Sign out</button></p></div>`
+      : "";
   return (
     topbar({ title: "Settings" }) +
     `<div class="card"><h3>Ops &amp; map</h3><p class="note" style="margin-top:0">The map, destinations, and daily operations pages are still available. They use the same sign-in and do not change how this console reads telemetry.</p><p><a class="more" href="/legacy">Open Ops &amp; map</a></p></div>` +
+    signOut +
     `<div class="foot"><span><a href="/legacy">Ops &amp; map</a></span><span></span></div>`
   );
 }
@@ -1006,6 +1023,24 @@ document.addEventListener("click", (e) => {
   if (toggle) {
     state.showAll = !state.showAll;
     render();
+    return;
+  }
+  const logout = e.target.closest("[data-act='logout']");
+  if (logout) {
+    fetch("/api/session/logout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      credentials: "same-origin",
+    })
+      .catch(() => {})
+      .finally(() => {
+        cache.clear();
+        state.view = null;
+        state.alerts = null;
+        state.login = true;
+        render();
+      });
   }
 });
 document.addEventListener("submit", async (e) => {
@@ -1043,7 +1078,13 @@ watchResolution();
 setInterval(() => {
   if (!document.hidden && !state.login) {
     cache.clear();
-    show();
+    show(true);
   }
 }, 60000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && !state.login && Date.now() - lastFetched >= 15000) {
+    cache.clear();
+    show(true);
+  }
+});
 show();

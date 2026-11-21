@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from worker import SnapshotArchive, records
+from worker import SnapshotArchive, records, save
 
 
 class ArchiveTests(unittest.TestCase):
@@ -48,3 +48,12 @@ class ArchiveTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 SnapshotArchive(path, "unifi", None)
             self.assertEqual(path.read_text(), '{"version":2}')
+
+    def test_save_reuses_fixed_temp_name_with_private_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.json"
+            save(path, {"ok": 1}, sync=False)
+            save(path, {"ok": 2}, sync=True)
+            self.assertEqual(json.loads(path.read_text()), {"ok": 2})
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["status.json"])

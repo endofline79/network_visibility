@@ -6,10 +6,14 @@ when it is listed here. Values are checked before they are copied into LogsQL.
 import ipaddress
 import os
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+
+_CACHE_LOCK = threading.Lock()
+_CACHE: dict[Path, tuple[tuple[int, int, int], "Inventory"]] = {}
 
 MAX_HOSTS = 16
 _ID = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?")
@@ -116,6 +120,15 @@ def _host(row, seen_ids, seen_ips, seen_macs, seen_names):
 def load_inventory(path=None):
     file = Path(path) if path is not None else inventory_path()
     try:
+        st = file.stat()
+        sig = (st.st_mtime_ns, st.st_size, st.st_ino)
+    except OSError:
+        raise InventoryError("inventory file cannot be read") from None
+    with _CACHE_LOCK:
+        cached = _CACHE.get(file)
+        if cached is not None and cached[0] == sig:
+            return cached[1]
+    try:
         loaded = yaml.safe_load(file.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError):
         raise InventoryError("inventory file cannot be read") from None
@@ -130,4 +143,9 @@ def load_inventory(path=None):
     seen_ids, seen_ips, seen_macs, seen_names = set(), set(), set(), set()
     for row in rows:
         hosts.append(_host(row, seen_ids, seen_ips, seen_macs, seen_names))
-    return Inventory(1, tuple(hosts))
+    inventory = Inventory(1, tuple(hosts))
+    with _CACHE_LOCK:
+        if len(_CACHE) >= 16:
+            _CACHE.clear()
+        _CACHE[file] = (sig, inventory)
+    return inventory

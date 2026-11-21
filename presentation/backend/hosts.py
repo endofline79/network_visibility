@@ -2,11 +2,12 @@
 
 Merge priority, highest first:
 1. iot-hosts.yaml (hand overrides, keyed by MAC and IP)
-2. UniFi snapshot clients (MAC is the identity; IP is the latest sample)
-3. Pi-hole client_name (IP only)
+2. UniFi snapshot clients and devices (MAC is the identity; IP is the latest sample)
+3. OPNsense dnsmasq-dhcp DHCPACK leases (MAC, IP, and optional hostname)
+4. Pi-hole client_name (IP only)
 
-There is no OPNsense DHCP or ARP feed. Wired clients that UniFi does not see
-stay unnamed unless Pi-hole has a client_name or the allowlist lists them.
+Static or non-OPNsense-DHCP wired clients that UniFi does not see stay unnamed
+unless Pi-hole has a client_name or the allowlist lists them.
 Refresh is about five minutes. Queries are fixed strings; allowlist values are
 validated and are not interpolated into LogsQL.
 """
@@ -21,12 +22,18 @@ from pathlib import Path
 
 
 DHCP_GAP = (
-    'No OPNsense DHCP or ARP feed. Wired clients that UniFi does not see '
-    'stay unnamed unless Pi-hole has a client_name or iot-hosts.yaml lists them.'
+    'OPNsense dnsmasq-dhcp DHCPACK leases are read when present, but there is no '
+    'full ARP table feed. Static or non-OPNsense-DHCP wired clients that UniFi '
+    'does not see stay unnamed unless Pi-hole has a client_name or iot-hosts.yaml lists them.'
 )
 UNIFI_CLIENTS = (
-    '_time:15m app_name:=unifi-snapshot entity_kind:=client'
-    ' | stats by (mac) any(ip) ip, any(name) name, max(_time) seen'
+    '_time:15m app_name:=unifi-snapshot (entity_kind:=client OR entity_kind:=device)'
+    ' | stats by (mac) any(ip) ip, any(name) name, any(kind) kind, max(_time) seen'
+    ' | limit 501'
+)
+DHCP_LEASES = (
+    '_time:24h hostname:=OPNsense.internal app_name:=dnsmasq-dhcp "DHCPACK"'
+    ' | stats by (_msg) max(_time) seen'
     ' | limit 501'
 )
 PIHOLE_CLIENTS = (
@@ -34,6 +41,7 @@ PIHOLE_CLIENTS = (
     ' | stats by (client_ip) any(client_name) name, max(_time) seen'
     ' | limit 501'
 )
+DHCPACK_RE = re.compile(r'^DHCPACK\([^)]+\)\s+(\S+)\s+([0-9a-fA-F:]{17})(?:\s+(\S+))?$')
 MAX_HOSTS = 16
 ID_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,31}$')
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._'()-]{0,79}$")
@@ -331,10 +339,12 @@ def normalize_unifi(rows):
         if not mac:
             skipped += 1
             continue
+        kind = _clean_name(row.get('kind'))
         item = {
             'mac': mac,
             'ip': normalize_ip(row.get('ip')),
             'name': _clean_name(row.get('name')),
+            'class': kind.lower() if kind and ID_RE.fullmatch(kind.lower()) else None,
             'seen': _clean_seen(row.get('seen')),
         }
         previous = found.get(mac)
@@ -342,6 +352,44 @@ def normalize_unifi(rows):
             continue
         found[mac] = item
     note = 'Some UniFi rows had no usable MAC.' if skipped else None
+    return list(found.values()), note
+
+
+def normalize_dhcp(rows):
+    if len(rows) > 500:
+        return [], 'DHCP lease query hit its row cap; leases were withheld.'
+    found = {}
+    skipped = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            skipped += 1
+            continue
+        msg = row.get('_msg')
+        if not isinstance(msg, str):
+            skipped += 1
+            continue
+        match = DHCPACK_RE.fullmatch(msg.strip())
+        if not match:
+            skipped += 1
+            continue
+        ip = normalize_ip(match.group(1))
+        mac = normalize_mac(match.group(2))
+        raw_name = match.group(3)
+        name = _clean_name(raw_name) if raw_name and raw_name != '*' else None
+        if not ip or not mac:
+            skipped += 1
+            continue
+        item = {'mac': mac, 'ip': ip, 'name': name, 'seen': _clean_seen(row.get('seen') or row.get('_time'))}
+        previous = found.get(mac)
+        if previous:
+            prev_seen = previous.get('seen') or ''
+            curr_seen = item.get('seen') or ''
+            if prev_seen > curr_seen:
+                continue
+            if prev_seen == curr_seen and previous.get('name') and not item.get('name'):
+                continue
+        found[mac] = item
+    note = 'Some DHCP rows could not be parsed.' if skipped else None
     return list(found.values()), note
 
 
@@ -380,7 +428,7 @@ def _blank(name, source, mac=None, ip=None, seen=None, identity=None, host_class
     }
 
 
-def merge_hosts(iot, unifi, pihole):
+def merge_hosts(iot, unifi, pihole, dhcp=()):
     """Return (hosts, ambiguous_ips). Higher-priority names win."""
     records = []
     by_mac = {}
@@ -389,6 +437,8 @@ def merge_hosts(iot, unifi, pihole):
 
     def claim(ip, record):
         if not ip:
+            return
+        if ip in ambiguous:
             return
         owner = claimed.get(ip)
         if owner is None:
@@ -400,7 +450,7 @@ def merge_hosts(iot, unifi, pihole):
             return
         if owner is record:
             return
-        if owner['source'] == 'unifi' and record['source'] == 'unifi':
+        if owner['source'] in ('unifi', 'dhcp') and record['source'] in ('unifi', 'dhcp'):
             ambiguous.add(ip)
             owner['ips'] = [item for item in owner['ips'] if item != ip]
             if owner['ip'] == ip:
@@ -429,10 +479,28 @@ def merge_hosts(iot, unifi, pihole):
                 record['seen'] = client['seen']
             claim(client.get('ip'), record)
             continue
-        record = _blank(client.get('name'), 'unifi', mac, seen=client.get('seen'))
+        record = _blank(
+            client.get('name'), 'unifi', mac,
+            seen=client.get('seen'), host_class=client.get('class'),
+        )
         records.append(record)
         by_mac[mac] = record
         claim(client.get('ip'), record)
+
+    for lease in dhcp or ():
+        mac = lease['mac']
+        if mac in by_mac:
+            record = by_mac[mac]
+            if lease.get('seen') and (not record['seen'] or lease['seen'] > record['seen']):
+                record['seen'] = lease['seen']
+            if not record['name'] and lease.get('name'):
+                record['name'] = lease['name']
+            claim(lease.get('ip'), record)
+            continue
+        record = _blank(lease.get('name'), 'dhcp', mac, seen=lease.get('seen'))
+        records.append(record)
+        by_mac[mac] = record
+        claim(lease.get('ip'), record)
 
     for row in pihole:
         ip = row['ip']
@@ -462,10 +530,12 @@ class HostCache:
         self._thread = None
         self._iot, self._iot_state = self._read_iot()
         self._unifi = []
+        self._dhcp = []
         self._pihole = []
         pending = 'pending' if self.clients else 'skipped'
         note = None if self.clients else 'VictoriaLogs is queried only while the console runs in live mode.'
         self._unifi_state = {'state': pending, 'count': 0, 'note': note}
+        self._dhcp_state = {'state': pending, 'count': 0, 'note': note}
         self._pihole_state = {'state': pending, 'count': 0, 'note': note}
         self._refreshed_at = None if self.clients else self.clock()
         self._dynamic_ok = not self.clients
@@ -506,6 +576,7 @@ class HostCache:
     def refresh(self):
         iot, iot_state = self._read_iot()
         unifi_rows, unifi_flag = self._query(UNIFI_CLIENTS)
+        dhcp_rows, dhcp_flag = self._query(DHCP_LEASES)
         pihole_rows, pihole_flag = self._query(PIHOLE_CLIENTS)
         with self._lock:
             self._iot, self._iot_state = iot, iot_state
@@ -530,6 +601,27 @@ class HostCache:
                     'count': len(self._unifi),
                     'note': 'UniFi client query failed; the previous sample was kept.',
                 }
+            if dhcp_flag == 'ok':
+                parsed, note = normalize_dhcp(dhcp_rows)
+                if note and 'cap' in note:
+                    self._dhcp_state = {
+                        'state': 'partial', 'count': len(self._dhcp), 'note': note,
+                    }
+                else:
+                    self._dhcp = parsed
+                    self._dhcp_state = {'state': 'ok', 'count': len(parsed), 'note': note}
+            elif dhcp_flag == 'skipped':
+                self._dhcp = []
+                self._dhcp_state = {
+                    'state': 'skipped', 'count': 0,
+                    'note': 'VictoriaLogs is queried only while the console runs in live mode.',
+                }
+            else:
+                self._dhcp_state = {
+                    'state': 'error',
+                    'count': len(self._dhcp),
+                    'note': 'DHCP lease query failed; the previous sample was kept.',
+                }
             if pihole_flag == 'ok':
                 parsed, note = normalize_pihole(pihole_rows)
                 if note and 'cap' in note:
@@ -552,12 +644,16 @@ class HostCache:
                     'note': 'Pi-hole client query failed; the previous sample was kept.',
                 }
             self._refreshed_at = self.clock()
-            self._dynamic_ok = unifi_flag in ('ok', 'skipped') and pihole_flag in ('ok', 'skipped')
+            self._dynamic_ok = (
+                unifi_flag in ('ok', 'skipped')
+                and dhcp_flag in ('ok', 'skipped')
+                and pihole_flag in ('ok', 'skipped')
+            )
         return self.snapshot()
 
     def snapshot(self):
         with self._lock:
-            hosts, ambiguous = merge_hosts(self._iot, self._unifi, self._pihole)
+            hosts, ambiguous = merge_hosts(self._iot, self._unifi, self._pihole, self._dhcp)
             refreshed = self._refreshed_at
             age = None if refreshed is None else self.clock() - refreshed
             stale = refreshed is None or not self._dynamic_ok or (
@@ -566,6 +662,7 @@ class HostCache:
             sources = {
                 'iot-hosts': {key: value for key, value in self._iot_state.items() if value is not None},
                 'unifi': {key: value for key, value in self._unifi_state.items() if value is not None},
+                'dhcp': {key: value for key, value in self._dhcp_state.items() if value is not None},
                 'pihole': {key: value for key, value in self._pihole_state.items() if value is not None},
             }
             view = {

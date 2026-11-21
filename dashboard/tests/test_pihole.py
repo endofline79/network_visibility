@@ -6,8 +6,9 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-from backend.pihole import (Config, DnsError, DnsSource, ReadOnlyApi, collect_queries,
-                            collect_summary, forward, query_record)
+from backend.pihole import (AuthExpiredError, Config, DnsError, DnsSource, ReadOnlyApi,
+                            WindowTooLargeError, collect_queries, collect_summary, forward,
+                            query_record)
 
 
 def row(query_id=1, when=1500.25, status="GRAVITY"):
@@ -194,6 +195,56 @@ class DnsTests(unittest.TestCase):
             with self.assertRaises(DnsError):
                 forward(Config(log_url="http://example.com:9428"), [query_record(row())], time.monotonic()+5)
             conn.assert_not_called()
+
+    def test_expired_session_reauthenticates_once_inline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "key"
+            path.write_text("not-a-real-secret")
+            api = ReadOnlyApi(Config(fingerprint="a" * 64, key_file=str(path)))
+            api.sid = "expired-session"
+            with patch.object(api, "_request") as request:
+                request.side_effect = [
+                    AuthExpiredError("Pi-hole returned HTTP 401."),
+                    {"session": {"valid": True, "sid": "fresh-session"}},
+                    {"history": []},
+                ]
+                result = api.get("/api/history", time.monotonic() + 5)
+                self.assertEqual(result, {"history": []})
+                self.assertEqual(api.sid, "fresh-session")
+                self.assertEqual([c.args[0] for c in request.call_args_list], ["GET", "POST", "GET"])
+            # Fresh session returning 401 must fail immediately without looping.
+            api.sid = None
+            with patch.object(api, "_request") as request:
+                request.side_effect = [
+                    {"session": {"valid": True, "sid": "bad-session"}},
+                    AuthExpiredError("Pi-hole returned HTTP 401."),
+                ]
+                with self.assertRaises(AuthExpiredError):
+                    api.get("/api/history", time.monotonic() + 5)
+                self.assertEqual(request.call_count, 2)
+
+    def test_burst_window_splits_instead_of_stalling_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "dns.json"
+            api = FakeApi()
+            sender = MagicMock()
+            windows = []
+
+            def bursty(_api, start, end, _deadline):
+                windows.append((start, end))
+                if end - start > 100:
+                    raise WindowTooLargeError("too many queries")
+                return [query_record(row(when=start + 1))]
+
+            source = DnsSource(path, Config(enabled=True), lambda c: api, sender, lambda: 2400)
+            with patch("backend.pihole.collect_queries", side_effect=bursty):
+                source.poll_once()
+            # 300 -> 150 -> 75 succeeds and advances checkpoint cleanly.
+            self.assertEqual(windows, [(1500, 1800), (1500, 1650), (1500, 1575)])
+            self.assertEqual(source.state["through"], 1575)
+            self.assertIsNone(source.state["pending"])
+            self.assertIsNone(source.archive_error)
+            sender.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -151,6 +151,10 @@ def presentation(name, kind, notes):
         return "tv", "Samsung TV"
     if "synology" in text or " nas" in text or text.startswith("nas"):
         return "nas", "NAS"
+    if kind == "switch" or "usw " in text:
+        return "router", "Switch"
+    if kind == "ap" or "u7 pro" in text:
+        return "wifi", "Access point"
     if "unifi" in text:
         return "wifi", "UniFi controller"
     if "sonos" in text:
@@ -261,7 +265,16 @@ class Directory:
                 "class": kind,
                 "dns_names": names,
                 "notes": notes,
+                "match_name": host.get("source") != "pihole",
             })
+        name_counts = Counter(
+            record["name"].casefold()
+            for record in by_ip.values()
+            if isinstance(record.get("name"), str) and record["name"]
+        )
+        for record in by_ip.values():
+            if name_counts.get((record.get("name") or "").casefold(), 0) > 1:
+                record["match_name"] = False
         return cls(by_id, by_ip)
 
     @classmethod
@@ -296,7 +309,10 @@ def client_expr(record):
     """IP plus inventory-safe names. Untrusted labels are not interpolated."""
     parts = [f'client_ip:="{record["ip"]}"']
     seen = set()
-    for name in [record.get("name"), *(record.get("dns_names") or [])]:
+    candidates = list(record.get("dns_names") or [])
+    if record.get("match_name", True):
+        candidates.insert(0, record.get("name"))
+    for name in candidates:
         if not isinstance(name, str) or name in seen or not DNS_SAFE.fullmatch(name):
             continue
         if name == record["ip"]:
@@ -326,7 +342,7 @@ def overview_queries(start, end, seconds):
         "fresh_flow": f"{look} app_name:=opnsense-flow schema:=2 | sort by (_time) desc | limit 1 | fields _time",
         "fresh_dns": f"{look} app_name:=pihole-dns | sort by (_time) desc | limit 1 | fields _time",
         "fresh_fw": f"{look} app_name:=filterlog | sort by (_time) desc | limit 1 | fields _time",
-        "blocks": f'{_span(start, end)} app_name:=filterlog ",block," | stats count() blocks',
+        "blocks": f"{_span(start, end)} app_name:=filterlog action:=block | stats count() blocks",
     }
     if deduped(seconds):
         queries["upload"] = (
@@ -379,8 +395,9 @@ def host_queries(start, end, seconds, ip, expr):
     span = _span(start, end)
     quoted = f'"{ip}"'
     dns = f"{span} app_name:=pihole-dns {expr}"
+    series_match = f"(src_addr:={quoted} OR (dst_addr:={quoted} {not_lan_filter('src_addr')}))"
     queries = {
-        "fw_blocks": f'{span} app_name:=filterlog ",block," ",{ip}," | stats count() blocks',
+        "fw_blocks": f"{span} app_name:=filterlog action:=block src:={quoted} | stats count() blocks",
     }
     if deduped(seconds):
         queries["upload"] = (
@@ -391,7 +408,7 @@ def host_queries(start, end, seconds, ip, expr):
             "| stats by (event_id) max(bytes) bytes | stats sum(bytes) bytes"
         )
         queries["series"] = (
-            f"{flow} (src_addr:={quoted} OR dst_addr:={quoted}) "
+            f"{flow} {series_match} "
             f"| stats by (event_id, _time:{step}) max(bytes) bytes "
             "| stats by (_time) sum(bytes) bytes | sort by (_time)"
         )
@@ -407,13 +424,16 @@ def host_queries(start, end, seconds, ip, expr):
             "| stats by (domain) count() queries "
             f"| sort by (queries) desc | limit {BLOCKED_FETCH}"
         )
+        queries["blocked_dns_total"] = (
+            f"{dns} outcome:=blocked | stats by (event_id) count() rows | stats count() queries"
+        )
     else:
         queries["upload"] = f"{flow} src_addr:={quoted} | stats sum(bytes) bytes"
         queries["download"] = (
             f"{flow} dst_addr:={quoted} {not_lan_filter('src_addr')} | stats sum(bytes) bytes"
         )
         queries["series"] = (
-            f"{flow} (src_addr:={quoted} OR dst_addr:={quoted}) "
+            f"{flow} {series_match} "
             f"| stats by (_time:{step}) sum(bytes) bytes | sort by (_time)"
         )
         queries["sites"] = (
@@ -424,6 +444,7 @@ def host_queries(start, end, seconds, ip, expr):
             f"{dns} outcome:=blocked | stats by (domain) count() queries "
             f"| sort by (queries) desc | limit {BLOCKED_FETCH}"
         )
+        queries["blocked_dns_total"] = f"{dns} outcome:=blocked | stats count() queries"
     return queries
 
 
@@ -434,12 +455,12 @@ def firewall_queries(start, end, seconds):
     return {
         "fresh": f"{look} app_name:=filterlog | sort by (_time) desc | limit 1 | fields _time",
         "series": (
-            f'{span} app_name:=filterlog ",block," | stats by (_time:{step}) count() blocks | sort by (_time)'
+            f"{span} app_name:=filterlog action:=block | stats by (_time:{step}) count() blocks | sort by (_time)"
         ),
-        "blocked": f'{span} app_name:=filterlog ",block," | stats count() blocks',
-        "allowed": f'{span} app_name:=filterlog ",pass," | stats count() blocks',
+        "blocked": f"{span} app_name:=filterlog action:=block | stats count() blocks",
+        "allowed": f"{span} app_name:=filterlog action:=pass | stats count() blocks",
         "sample": (
-            f'{span} app_name:=filterlog ",block," | sort by (_time) desc '
+            f"{span} app_name:=filterlog action:=block | sort by (_time) desc "
             f"| limit {BLOCK_SAMPLE} | fields _time, _msg"
         ),
     }
@@ -462,8 +483,8 @@ def dns_queries(start, end, seconds):
             "| stats by (domain) count() queries | sort by (queries) desc | limit 12"
         )
         queries["clients"] = (
-            f"{span} | stats by (event_id, client_ip, client_name) count() rows "
-            "| stats by (client_ip, client_name) count() queries "
+            f"{span} | stats by (event_id, client_ip) max(client_name) client_name "
+            "| stats by (client_ip) count() queries, max(client_name) client_name "
             "| sort by (queries) desc | limit 12"
         )
         queries["blocked_clients"] = (
@@ -485,7 +506,7 @@ def dns_queries(start, end, seconds):
             f"{span} | stats by (domain) count() queries | sort by (queries) desc | limit 12"
         )
         queries["clients"] = (
-            f"{span} | stats by (client_ip, client_name) count() queries "
+            f"{span} | stats by (client_ip) count() queries, max(client_name) client_name "
             "| sort by (queries) desc | limit 12"
         )
         queries["blocked_clients"] = (
@@ -747,9 +768,14 @@ def _domain_rows(rows):
 
 def attribute_sites(download, upload, domain_rows, fetch_cap=DOMAIN_FETCH):
     grouped = {}
+    site_cats = {}
     for item in _domain_rows(domain_rows):
         site = site_name(item["name"]) or item["name"]
         grouped[site] = grouped.get(site, 0) + item["queries"]
+        cat = category_for(item["name"])
+        if cat != "Other":
+            cats = site_cats.setdefault(site, Counter())
+            cats[cat] += item["queries"]
     ranked = sorted(grouped.items(), key=lambda item: (-item[1], item[0]))
     capped = domain_rows is not None and len(domain_rows) >= fetch_cap
     if not ranked:
@@ -771,9 +797,15 @@ def attribute_sites(download, upload, domain_rows, fetch_cap=DOMAIN_FETCH):
     up_parts = split_weighted(upload or 0, weights)
     sites = []
     for (name, queries), down, up in zip(top, down_parts, up_parts):
+        if name == "other":
+            category = "Other"
+        elif site_cats.get(name):
+            category = sorted(site_cats[name].items(), key=lambda item: (-item[1], item[0]))[0][0]
+        else:
+            category = category_for(name)
         sites.append({
             "name": name,
-            "category": "Other" if name == "other" else category_for(name),
+            "category": category,
             "download_bytes": down,
             "upload_bytes": up,
             "queries": queries,
@@ -942,6 +974,10 @@ def reduce_host(record, results, end, seconds, now, mode="live"):
     points = accumulate(start, end, step, results.get("series"), lambda row: number(row.get("bytes")))
     if points is None and traffic_state == "available":
         traffic_state = "partial"
+    blocked = blocked_tags(results.get("blocked_dns")) if results.get("blocked_dns") is not None else []
+    blocked_total = scalar_int(results.get("blocked_dns_total"), "queries")
+    if blocked_total is None and results.get("blocked_dns") is not None:
+        blocked_total = sum(item["queries"] for item in blocked)
     payload = _envelope(mode, False, end, seconds, now)
     payload.update({
         "state": "unavailable" if traffic_state == "unavailable" and site_state == "unavailable" else (
@@ -960,7 +996,8 @@ def reduce_host(record, results, end, seconds, now, mode="live"):
         "sites_contacted": contacted,
         "sites_capped": capped,
         "sites": sites,
-        "blocked": blocked_tags(results.get("blocked_dns")) if results.get("blocked_dns") is not None else [],
+        "blocked": blocked,
+        "blocked_total": blocked_total,
         "blocked_state": "unavailable" if results.get("blocked_dns") is None else "available",
         "firewall_blocks": scalar_int(results.get("fw_blocks"), "blocks"),
         "throughput": _series_payload(points, step),
@@ -994,7 +1031,7 @@ def _service_label(ip, proto, port):
 
 def _port_text(ports):
     if not ports:
-        return ""
+        return "", None
     common, _count = Counter(ports).most_common(1)[0]
     uniq = sorted(set(ports))
     if len(uniq) >= 4 and uniq[-1] - uniq[0] <= 512:
@@ -1050,7 +1087,7 @@ def reduce_firewall_sample(rows, directory, cap=BLOCK_SAMPLE):
             "name": ip,
             "protocol": proto,
             "port": port_label,
-            "label": _service_label(ip, proto, sample_port) if sample_port is not None else "",
+            "label": _service_label(ip, proto, sample_port),
             "count": len(items),
         })
     destinations.sort(key=lambda item: (-item["count"], item["name"]))
@@ -1173,27 +1210,35 @@ def reduce_dns(results, directory, end, seconds, now, mode="live"):
             blocked_by_ip[ip] = blocked_by_ip.get(ip, 0) + number(row.get("queries"))
         except (ValueError, TypeError):
             continue
-    clients = []
-    seen = set()
+    clients_by_ip = {}
     for row in results.get("clients") or []:
         if not isinstance(row, dict):
             continue
         ip = normalize_ip(str(row.get("client_ip") or ""))
-        if not ip or ip in seen:
+        if not ip:
             continue
-        seen.add(ip)
         try:
             queries = number(row.get("queries"))
         except (ValueError, TypeError):
             continue
+        raw_name = _clean_name(row.get("client_name"))
+        existing = clients_by_ip.get(ip)
+        if existing is not None:
+            existing["queries"] += queries
+            if not existing["raw_name"] and raw_name:
+                existing["raw_name"] = raw_name
+            continue
+        clients_by_ip[ip] = {"ip": ip, "queries": queries, "raw_name": raw_name}
+    clients = []
+    for ip, item in clients_by_ip.items():
         known = directory.known(ip) if directory else None
-        name = known["name"] if known else (_clean_name(row.get("client_name")) or ip)
+        name = known["name"] if known else (item["raw_name"] or ip)
         clients.append({
             "id": known["id"] if known else ("h-" + ip.replace(".", "-") if _is_lan(ip) else None),
             "name": name,
             "ip": ip,
             "icon": known["icon"] if known else "monitor",
-            "queries": queries,
+            "queries": item["queries"],
             "blocked": blocked_by_ip.get(ip, 0),
             "link": bool(known) or _is_lan(ip),
         })

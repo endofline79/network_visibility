@@ -1,7 +1,7 @@
 # AI-02 stack. VictoriaLogs memory matches the 2026-11-01 live bump
-# (3GiB allowedBytes, 4g container, no swap headroom). filterlog-relay is idle
-# until OPNsense is repointed; that cutover is not done.
-# See docs/phase0-planner-prep.md.
+# (3GiB allowedBytes, 4g container, no swap headroom). filterlog-relay parses
+# filterlog on :1515; OPNsense also still forwards all programs to :514 until
+# the final trim cutover. See docs/phase0-planner-prep.md.
 name: visibility
 
 services:
@@ -267,10 +267,8 @@ services:
         max-size: "5m"
         max-file: "2"
 
-  # Live on AI-02 as visibility-alerter:0.1.0. The image build context
-  # (alerter/Dockerfile, alerter/rules.json) is not in this git repo; it lives
-  # on the host checkout. This block matches that running service. Secret
-  # values stay in files named by *_FILE; nothing secret is inlined here.
+  # Live on AI-02 as visibility-alerter:0.1.0. Secret values stay in files named
+  # by *_FILE; nothing secret is inlined here.
   alerter:
     image: visibility-alerter:0.1.0
     build:
@@ -307,6 +305,12 @@ services:
       - type: bind
         source: ${TELEMETRY_API_SECRETS_DIR:-/home/klab/.local/share/visibility/telemetry-api}/server.crt
         target: /certs/telemetry-api/server.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PRESENTATION_CERT_FILE:-/home/klab/.local/share/visibility/presentation/dashboard.crt}
+        target: /certs/presentation/dashboard.crt
         read_only: true
         bind:
           create_host_path: false

@@ -3,7 +3,12 @@
 Phase 0 adds a host-name cache and planner settings for a later ask path.
 This process does not call an LLM.
 """
+import copy
+import logging
 import os
+import threading
+import time
+from contextlib import asynccontextmanager
 from datetime import datetime,timedelta,timezone
 from pathlib import Path
 from typing import Literal
@@ -20,6 +25,30 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 
+log=logging.getLogger('visibility.app')
+NETWORK_CACHE_TTL=15.0
+NETWORK_CACHE_MAX=32
+_network_cache_lock=threading.Lock()
+_network_cache={}
+
+def _network_cached(key,builder):
+    now=time.monotonic()
+    with _network_cache_lock:
+        entry=_network_cache.get(key)
+        if entry and now-entry[0]<NETWORK_CACHE_TTL:
+            return copy.deepcopy(entry[1])
+    payload=builder()
+    with _network_cache_lock:
+        _network_cache[key]=(time.monotonic(),copy.deepcopy(payload))
+        while len(_network_cache)>NETWORK_CACHE_MAX:
+            _network_cache.pop(next(iter(_network_cache)))
+    return payload
+
+@asynccontextmanager
+async def _lifespan(_app):
+    try:yield
+    finally:host_cache._stop.set()
+
 MODE=os.getenv('PRESENTATION_MODE','demo')
 if MODE not in ('demo','live'):raise RuntimeError('PRESENTATION_MODE must be demo or live')
 AUTH=os.getenv('PRESENTATION_AUTH','preview')
@@ -27,7 +56,7 @@ if AUTH not in ('preview','required'):raise RuntimeError('Invalid authentication
 if MODE=='live' and AUTH!='required':raise RuntimeError('Live mode requires viewer authentication')
 viewer=Viewer(os.getenv('VIEWER_CONFIG_FILE','/run/visibility/viewer.json')) if AUTH=='required' else None
 STATIC=Path(os.getenv('STATIC_DIR',Path(__file__).resolve().parents[1]/'frontend/dist'))
-app=FastAPI(title='Visibility presentation',docs_url=None,redoc_url=None,openapi_url=None)
+app=FastAPI(title='Visibility presentation',docs_url=None,redoc_url=None,openapi_url=None,lifespan=_lifespan)
 app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver','192.168.5.230','ai-02'])
 @app.middleware('http')
 async def guard(request,call_next):
@@ -41,6 +70,8 @@ async def guard(request,call_next):
     response.headers['X-Content-Type-Options']='nosniff'
     response.headers['Referrer-Policy']='no-referrer'
     response.headers['Cache-Control']='no-store' if request.url.path.startswith('/api/') else 'no-cache'
+    if request.url.scheme=='https':
+        response.headers['Strict-Transport-Security']='max-age=31536000'
     return response
 if viewer:
     app.add_middleware(SessionMiddleware,secret_key=viewer.secret,session_cookie='visibility_viewer',max_age=28800,same_site='strict',https_only=True)
@@ -73,8 +104,10 @@ def network_overview(range:Literal['1h','24h','7d']='24h',end:datetime|None=None
         return demo_overview(anchor,seconds)
     from .network import Directory,live_overview
     from .service import service
-    try:return live_overview(service.client,anchor,seconds,Directory.from_sources(host_cache))
-    except Exception:raise HTTPException(503,'Network overview cannot be validated right now') from None
+    try:return _network_cached(('overview',range,anchor.isoformat()),lambda:live_overview(service.client,anchor,seconds,Directory.from_sources(host_cache)))
+    except Exception as exc:
+        log.warning('network overview failed: %s',type(exc).__name__)
+        raise HTTPException(503,'Network overview cannot be validated right now') from None
 @app.get('/api/network/host/{host_id}')
 def network_host(host_id:str,range:Literal['1h','24h','7d']='24h',end:datetime|None=None):
     if not host_id or len(host_id)>80 or not all(ch.isalnum() or ch in '-_.' for ch in host_id):
@@ -89,8 +122,10 @@ def network_host(host_id:str,range:Literal['1h','24h','7d']='24h',end:datetime|N
     from .service import service
     record=Directory.from_sources(host_cache).resolve(host_id)
     if record is None:raise HTTPException(404,'Host was not found')
-    try:return live_host(service.client,anchor,seconds,record)
-    except Exception:raise HTTPException(503,'Host view cannot be validated right now') from None
+    try:return _network_cached(('host',range,anchor.isoformat(),record['id']),lambda:live_host(service.client,anchor,seconds,record))
+    except Exception as exc:
+        log.warning('network host failed: %s',type(exc).__name__)
+        raise HTTPException(503,'Host view cannot be validated right now') from None
 @app.get('/api/network/firewall')
 def network_firewall(range:Literal['1h','24h','7d']='24h',end:datetime|None=None):
     anchor=_anchor(end);seconds=_RANGE_SECONDS[range]
@@ -99,8 +134,10 @@ def network_firewall(range:Literal['1h','24h','7d']='24h',end:datetime|None=None
         return demo_firewall(anchor,seconds)
     from .network import Directory,live_firewall
     from .service import service
-    try:return live_firewall(service.client,anchor,seconds,Directory.from_sources(host_cache))
-    except Exception:raise HTTPException(503,'Firewall view cannot be validated right now') from None
+    try:return _network_cached(('firewall',range,anchor.isoformat()),lambda:live_firewall(service.client,anchor,seconds,Directory.from_sources(host_cache)))
+    except Exception as exc:
+        log.warning('network firewall failed: %s',type(exc).__name__)
+        raise HTTPException(503,'Firewall view cannot be validated right now') from None
 @app.get('/api/network/dns')
 def network_dns(range:Literal['1h','24h','7d']='24h',end:datetime|None=None):
     anchor=_anchor(end);seconds=_RANGE_SECONDS[range]
@@ -109,17 +146,15 @@ def network_dns(range:Literal['1h','24h','7d']='24h',end:datetime|None=None):
         return demo_dns(anchor,seconds)
     from .network import Directory,live_dns
     from .service import service
-    try:return live_dns(service.client,anchor,seconds,Directory.from_sources(host_cache))
-    except Exception:raise HTTPException(503,'DNS view cannot be validated right now') from None
+    try:return _network_cached(('dns',range,anchor.isoformat()),lambda:live_dns(service.client,anchor,seconds,Directory.from_sources(host_cache)))
+    except Exception as exc:
+        log.warning('network dns failed: %s',type(exc).__name__)
+        raise HTTPException(503,'DNS view cannot be validated right now') from None
 @app.get('/api/health')
 def health():return {'status':'ok','mode':MODE,'version':VERSION}
 @app.get('/api/overview',response_model=Overview)
 def overview(window:Literal['15m','1h','24h']='1h',scenario:Literal['normal','stale','unavailable','error']='normal',end:datetime|None=None):
-    anchor=end or datetime.now(timezone.utc).replace(second=0,microsecond=0)
-    if anchor.tzinfo is None:raise HTTPException(422,'A timezone is required')
-    anchor=anchor.astimezone(timezone.utc)
-    if (anchor-datetime.now(timezone.utc)).total_seconds()>60:raise HTTPException(422,'Future windows are unavailable')
-    if (datetime.now(timezone.utc)-anchor).total_seconds()>30*86400:raise HTTPException(422,'Window exceeds retention')
+    anchor=_anchor(end)
     seconds={'15m':900,'1h':3600,'24h':86400}[window]
     if MODE=='demo':
         if scenario=='error':raise HTTPException(503,'Demo unavailable state')
@@ -127,14 +162,12 @@ def overview(window:Literal['15m','1h','24h']='1h',scenario:Literal['normal','st
     if scenario!='normal':raise HTTPException(422,'Demo scenarios are unavailable in live mode')
     from .service import service
     try:return service.overview(anchor,seconds)
-    except Exception:raise HTTPException(503,'Telemetry cannot be validated right now') from None
+    except Exception as exc:
+        log.warning('overview failed: %s',type(exc).__name__)
+        raise HTTPException(503,'Telemetry cannot be validated right now') from None
 @app.get('/api/ops',response_model=OpsHome)
 def ops_home(window:Literal['15m','1h']='1h',scenario:Literal['normal','stale','unavailable','error']='normal',end:datetime|None=None):
-    anchor=end or datetime.now(timezone.utc).replace(second=0,microsecond=0)
-    if anchor.tzinfo is None:raise HTTPException(422,'A timezone is required')
-    anchor=anchor.astimezone(timezone.utc)
-    if (anchor-datetime.now(timezone.utc)).total_seconds()>60:raise HTTPException(422,'Future windows are unavailable')
-    if (datetime.now(timezone.utc)-anchor).total_seconds()>30*86400:raise HTTPException(422,'Window exceeds retention')
+    anchor=_anchor(end)
     seconds={'15m':900,'1h':3600}[window]
     from . import ops as ops_view
     if MODE=='demo':
@@ -144,14 +177,12 @@ def ops_home(window:Literal['15m','1h']='1h',scenario:Literal['normal','stale','
     try:
         from .service import service
         return ops_view.live_ops(service.client,anchor,seconds)
-    except Exception:raise HTTPException(503,'Operations view cannot be validated right now') from None
+    except Exception as exc:
+        log.warning('ops home failed: %s',type(exc).__name__)
+        raise HTTPException(503,'Operations view cannot be validated right now') from None
 @app.get('/api/destinations',response_model=DestinationsView)
 def destinations(window:Literal['1h','24h','7d']='24h',host:str='all',scenario:Literal['normal','stale','unavailable','error']='normal',end:datetime|None=None):
-    anchor=end or datetime.now(timezone.utc).replace(second=0,microsecond=0)
-    if anchor.tzinfo is None:raise HTTPException(422,'A timezone is required')
-    anchor=anchor.astimezone(timezone.utc)
-    if (anchor-datetime.now(timezone.utc)).total_seconds()>60:raise HTTPException(422,'Future windows are unavailable')
-    if (datetime.now(timezone.utc)-anchor).total_seconds()>30*86400:raise HTTPException(422,'Window exceeds retention')
+    anchor=_anchor(end)
     seconds={'1h':3600,'24h':86400,'7d':7*86400}[window]
     from .inventory import InventoryError,load_inventory
     from . import destinations as destinations_view
@@ -165,7 +196,9 @@ def destinations(window:Literal['1h','24h','7d']='24h',host:str='all',scenario:L
     try:
         from .service import service
         return destinations_view.live_destinations(service.client,inventory,anchor,seconds,host)
-    except Exception:raise HTTPException(503,'DNS destinations cannot be validated right now') from None
+    except Exception as exc:
+        log.warning('destinations failed: %s',type(exc).__name__)
+        raise HTTPException(503,'DNS destinations cannot be validated right now') from None
 @app.get('/api/alerts',response_model=Alerts)
 def alerts():
     from . import alerts as alert_view
@@ -173,7 +206,9 @@ def alerts():
     try:
         from .service import service
         return alert_view.live_alerts(service.client)
-    except Exception:raise HTTPException(503,'Alerts cannot be validated right now') from None
+    except Exception as exc:
+        log.warning('alerts failed: %s',type(exc).__name__)
+        raise HTTPException(503,'Alerts cannot be validated right now') from None
 @app.get('/api/globe',response_model=GlobeSnapshot)
 def live_globe(scenario:Literal['normal','stale','unavailable','error']='normal'):
     if MODE=='demo':

@@ -12,7 +12,6 @@ import os
 from pathlib import Path
 import re
 import ssl
-import tempfile
 import threading
 import time
 import uuid
@@ -279,16 +278,21 @@ class Inventory:
 
     def _persist(self, snapshot):
         # Atomic, private latest-state file; never persist raw API responses or keys.
-        with tempfile.NamedTemporaryFile(mode="w", dir=self.path.parent, prefix=".unifi-", delete=False) as temp:
-            name = temp.name
-            try:
-                json.dump({"version": 1, "snapshot": snapshot}, temp, allow_nan=False)
-                temp.flush()
-                os.fsync(temp.fileno())
-                os.replace(name, self.path)
-            finally:
-                if os.path.exists(name):
-                    os.unlink(name)
+        temp = self.path.parent / f".{self.path.name}.tmp"
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.chmod(temp, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                fd = -1
+                json.dump({"version": 1, "snapshot": snapshot}, handle, allow_nan=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, self.path)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            if temp.exists():
+                temp.unlink()
 
     def poll_once(self):
         if not self.config.enabled or not self.poll_lock.acquire(blocking=False):

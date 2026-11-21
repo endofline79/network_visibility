@@ -8,6 +8,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import select
 import signal
 import socket
 import sqlite3
@@ -23,10 +24,13 @@ EXPORTER = os.getenv("FLOW_EXPORTER", "192.168.5.1")
 LOG_URL = os.getenv("VICTORIALOGS_URL", "http://logs:9428")
 STATE = Path(os.getenv("FLOW_STATE_DIR", "/state"))
 MAX_PENDING = 100000
+ENQUEUE_BATCH_SIZE = 50
+ENQUEUE_FLUSH_SECONDS = 0.25
 stop = threading.Event()
 lock = threading.Lock()
 stats = {"started_at": time.time(), "datagrams": 0, "rejected_datagrams": 0,
-         "decoded_records": 0, "invalid_records": 0, "overflow_records": 0,
+         "decoded_records": 0, "duplicate_records": 0, "invalid_records": 0,
+         "invalid_reasons": {}, "sqlite_errors": 0, "overflow_records": 0,
          "inserted_records": 0, "last_datagram": None, "last_decoded": None,
          "last_insert": None, "insert_error": False, "pending_records": 0}
 
@@ -74,11 +78,39 @@ def database(path):
 
 
 def enqueue(db, event):
-    if db.execute("SELECT count(*) FROM pending").fetchone()[0] >= MAX_PENDING:
-        return False
+    accepted, duplicates, overflow = enqueue_batch(db, [event])
+    return overflow == 0
+
+
+def enqueue_batch(db, events):
+    """Insert a batch of events in one transaction. Returns (accepted, duplicates, overflow)."""
+    if not events:
+        return 0, 0, 0
+    current = db.execute("SELECT count(*) FROM pending").fetchone()[0]
+    room = max(0, MAX_PENDING - current)
+    if room == 0:
+        return 0, 0, len(events)
+    to_insert = events[:room]
+    overflow = len(events) - len(to_insert)
+    accepted = 0
+    duplicates = 0
     with db:
-        db.execute("INSERT OR IGNORE INTO pending VALUES (?,?)", (event["event_id"], json.dumps(event)))
-    return True
+        for event in to_insert:
+            cursor = db.execute("INSERT OR IGNORE INTO pending VALUES (?,?)",
+                                (event["event_id"], json.dumps(event)))
+            if cursor.rowcount:
+                accepted += 1
+            else:
+                duplicates += 1
+    return accepted, duplicates, overflow
+
+
+def _record_invalid(reason):
+    with lock:
+        stats["invalid_records"] += 1
+        reasons = stats["invalid_reasons"]
+        if reason in reasons or len(reasons) < 16:
+            reasons[reason] = reasons.get(reason, 0) + 1
 
 
 def writer():
@@ -140,7 +172,7 @@ def main():
     db = database(STATE / "pending.sqlite3")
     decoder = subprocess.Popen(["goflow2", "-listen", "netflow://127.0.0.1:2055",
         "-addr", "127.0.0.1:8080", "-mapping", "/app/mapping.yaml", "-loglevel", "error"], stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL, text=True)
+        stderr=subprocess.DEVNULL, bufsize=0)
     workers = [threading.Thread(target=f, daemon=True) for f in (proxy, writer)]
     for worker in workers:
         worker.start()
@@ -150,7 +182,7 @@ def main():
                 self.send_error(404)
                 return
             with lock:
-                status = dict(stats)
+                status = {**stats, "invalid_reasons": dict(stats["invalid_reasons"])}
             status["running"] = decoder.poll() is None and all(t.is_alive() for t in workers)
             status["exporter"] = EXPORTER
             status["stale"] = not status["last_decoded"] or time.time()-status["last_decoded"] > 180
@@ -179,19 +211,62 @@ def main():
         decoder.terminate()
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
+    pending_batch = []
+    last_flush = time.monotonic()
+
+    def flush_batch():
+        nonlocal pending_batch, last_flush
+        if not pending_batch:
+            return
+        batch = pending_batch
+        pending_batch = []
+        last_flush = time.monotonic()
+        try:
+            _accepted, duplicates, overflow = enqueue_batch(db, batch)
+            with lock:
+                stats["duplicate_records"] += duplicates
+                stats["overflow_records"] += overflow
+        except sqlite3.Error:
+            with lock:
+                stats["sqlite_errors"] += 1
+                stats["overflow_records"] += len(batch)
+
+    def handle_line(raw_line):
+        try:
+            event = normalize(json.loads(raw_line))
+        except (ValueError, KeyError, TypeError, OverflowError) as exc:
+            _record_invalid(str(exc)[:60] or type(exc).__name__)
+            return
+        pending_batch.append(event)
+        with lock:
+            stats["decoded_records"] += 1
+            stats["last_decoded"] = time.time()
+        if len(pending_batch) >= ENQUEUE_BATCH_SIZE:
+            flush_batch()
+
     try:
-        for line in decoder.stdout:
-            try:
-                event = normalize(json.loads(line))
-                accepted = enqueue(db, event)
-                with lock:
-                    stats["decoded_records"] += 1
-                    stats["last_decoded"] = time.time()
-                    if not accepted:
-                        stats["overflow_records"] += 1
-            except (ValueError, KeyError, TypeError, OverflowError):
-                with lock:
-                    stats["invalid_records"] += 1
+        fd = decoder.stdout.fileno()
+        buf = bytearray()
+        while True:
+            ready, _, _ = select.select([fd], [], [], ENQUEUE_FLUSH_SECONDS)
+            if ready:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+                while True:
+                    nl = buf.find(b"\n")
+                    if nl == -1:
+                        break
+                    line = bytes(buf[:nl])
+                    del buf[:nl + 1]
+                    if line:
+                        handle_line(line.decode("utf-8", errors="replace"))
+            if pending_batch and (time.monotonic() - last_flush >= ENQUEUE_FLUSH_SECONDS):
+                flush_batch()
+        if buf:
+            handle_line(buf.decode("utf-8", errors="replace"))
+        flush_batch()
     finally:
         stop.set()
         if decoder.poll() is None:

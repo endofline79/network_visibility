@@ -24,10 +24,17 @@ from pathlib import Path
 
 
 MAX_FRAME = 65536
+MAX_BATCH_BYTES = 4 * 1024 * 1024
+MAX_CONNECTIONS = 16
+IDLE_TIMEOUT = 300.0
 INSERT_HOSTS = {'logs', '127.0.0.1', 'localhost'}
 
 
 class FramingError(ValueError):
+    pass
+
+
+class PermanentInsertError(RuntimeError):
     pass
 
 
@@ -277,8 +284,13 @@ def post_jsonlines(url, rows, attempts=3):
         return
     target = check_insert_url(url)
     body = encode_batch(rows)
-    if len(body) > 4 * 1024 * 1024:
-        raise RuntimeError('batch too large')
+    if len(body) > MAX_BATCH_BYTES:
+        if len(rows) == 1:
+            raise PermanentInsertError('single row exceeds batch size limit')
+        mid = len(rows) // 2
+        post_jsonlines(url, rows[:mid], attempts=attempts)
+        post_jsonlines(url, rows[mid:], attempts=attempts)
+        return
     path = insert_path()
     port = target.port or 80
     last = 'unavailable'
@@ -291,7 +303,11 @@ def post_jsonlines(url, rows, attempts=3):
             response.read(1024)
             if status == 200:
                 return
+            if 400 <= status < 500 and status not in (408, 429):
+                raise PermanentInsertError(f'insert rejected: {status}')
             last = status
+        except PermanentInsertError:
+            raise
         except (OSError, http.client.HTTPException):
             last = 'unavailable'
         finally:
@@ -302,23 +318,29 @@ def post_jsonlines(url, rows, attempts=3):
 
 
 class Relay:
-    def __init__(self, insert, networks):
+    def __init__(self, insert, networks, stop=None, idle_timeout=IDLE_TIMEOUT):
         self.insert = insert
         self.networks = tuple(networks)
+        self.stop = stop or threading.Event()
+        self.idle_timeout = idle_timeout
 
     def handle(self, conn):
         buf = bytearray()
         pending = []
         conn.settimeout(0.25)
+        last_activity = time.monotonic()
         try:
-            while True:
+            while not self.stop.is_set():
                 try:
                     chunk = conn.recv(8192)
                 except socket.timeout:
                     chunk = None
+                except OSError:
+                    break
                 if chunk == b'':
                     break
                 if chunk:
+                    last_activity = time.monotonic()
                     buf.extend(chunk)
                     try:
                         frames = pop_frames(buf)
@@ -328,21 +350,32 @@ class Relay:
                     for frame in frames:
                         pending.append(row_from_frame(frame, self.networks))
                 if len(pending) >= 50 or (chunk is None and pending):
-                    self._flush(pending)
+                    if not self._flush(pending):
+                        return
                     pending = []
+                if chunk is None and self.idle_timeout and time.monotonic() - last_activity > self.idle_timeout:
+                    break
             if pending:
                 self._flush(pending)
         finally:
             conn.close()
 
     def _flush(self, pending):
+        backoff = 0.5
         while True:
             try:
                 self.insert(pending)
-                return
+                return True
+            except PermanentInsertError as exc:
+                print(f'filterlog-relay dropped un-insertable batch ({len(pending)} rows): {exc}', flush=True)
+                return True
             except Exception:
+                if self.stop.is_set():
+                    print('filterlog-relay stopping with unflushed batch', flush=True)
+                    return False
                 print('filterlog-relay insert failed; holding the batch', flush=True)
-                time.sleep(0.5)
+                self.stop.wait(backoff)
+                backoff = min(backoff * 2, 5.0)
 
 
 def peer_allowed(peer, allow_from):
@@ -363,7 +396,7 @@ def peer_allowed(peer, allow_from):
     return address in allowed
 
 
-def serve(relay, host, port, allow_from=(), stop=None):
+def serve(relay, host, port, allow_from=(), stop=None, max_connections=MAX_CONNECTIONS):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((host, port))
@@ -372,12 +405,27 @@ def serve(relay, host, port, allow_from=(), stop=None):
     bound = sock.getsockname()
     print(f'filterlog-relay listening on {bound[0]}:{bound[1]}', flush=True)
     stopper = stop or threading.Event()
+    relay.stop = stopper
+    slots = threading.BoundedSemaphore(max_connections)
+    active = set()
+    active_lock = threading.Lock()
+
+    def run_connection(conn):
+        current = threading.current_thread()
+        try:
+            relay.handle(conn)
+        finally:
+            with active_lock:
+                active.discard(current)
+            slots.release()
 
     def shutdown(*_args):
         stopper.set()
         sock.close()
 
-    signal.signal(signal.SIGTERM, shutdown)
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, shutdown)
+        signal.signal(signal.SIGINT, shutdown)
     try:
         while not stopper.is_set():
             try:
@@ -389,9 +437,25 @@ def serve(relay, host, port, allow_from=(), stop=None):
             if not peer_allowed(peer, allow_from):
                 conn.close()
                 continue
-            threading.Thread(target=relay.handle, args=(conn,), daemon=True).start()
+            if not slots.acquire(blocking=False):
+                print('filterlog-relay connection limit reached; closing peer', flush=True)
+                conn.close()
+                continue
+            thread = threading.Thread(target=run_connection, args=(conn,), daemon=True)
+            with active_lock:
+                active.add(thread)
+            thread.start()
     finally:
+        stopper.set()
         sock.close()
+        deadline = time.monotonic() + 10.0
+        with active_lock:
+            threads = list(active)
+        for thread in threads:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            thread.join(timeout=remaining)
     return bound
 
 

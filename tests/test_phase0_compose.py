@@ -17,6 +17,7 @@ class Phase0ComposeTests(unittest.TestCase):
         self.assertIn('memswap_limit: 4g', compose)
         self.assertIn('\n  filterlog-relay:\n', compose)
         self.assertIn('\n  alerter:\n', compose)
+        self.assertIn('/certs/presentation/dashboard.crt', compose)
         self.assertIn(':1515/tcp', compose)
         self.assertIn('_stream_fields=hostname,app_name', compose)
         self.assertNotIn('hooks.slack.com', compose)

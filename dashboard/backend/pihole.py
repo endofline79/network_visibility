@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 import re
 import ssl
-import tempfile
 import threading
 import time
 from urllib.parse import urlencode, urlsplit
@@ -29,6 +28,14 @@ BLOCKED = frozenset(("GRAVITY", "REGEX", "DENYLIST", "GRAVITY_CNAME", "REGEX_CNA
 
 
 class DnsError(Exception):
+    pass
+
+
+class AuthExpiredError(DnsError):
+    pass
+
+
+class WindowTooLargeError(DnsError):
     pass
 
 
@@ -111,6 +118,8 @@ class ReadOnlyApi:
             response = conn.getresponse()
             if response.status == 401:
                 self.sid = None
+                if method == "GET":
+                    raise AuthExpiredError("Pi-hole returned HTTP 401.")
             if response.status not in ((204,) if method == "DELETE" else (200,)):
                 raise DnsError(f"Pi-hole returned HTTP {response.status}.")
             chunks, size = [], 0
@@ -138,16 +147,26 @@ class ReadOnlyApi:
         finally:
             conn.close()
 
+    def _authenticate(self, deadline):
+        session = obj(self._request("POST", "/api/auth", deadline, {"password": self.password}).get("session"))
+        sid = session.get("sid")
+        if session.get("valid") is not True or not isinstance(sid, str) or not re.fullmatch(r"[A-Za-z0-9+/=_-]{8,256}", sid):
+            raise DnsError("Pi-hole authentication did not create a valid session.")
+        self.sid = sid
+
     def get(self, path, deadline):
         if not READ_PATH.fullmatch(path):
             raise DnsError("Endpoint is outside the DNS collection scope.")
-        if self.sid is None:
-            session = obj(self._request("POST", "/api/auth", deadline, {"password": self.password}).get("session"))
-            sid = session.get("sid")
-            if session.get("valid") is not True or not isinstance(sid, str) or not re.fullmatch(r"[A-Za-z0-9+/=_-]{8,256}", sid):
-                raise DnsError("Pi-hole authentication did not create a valid session.")
-            self.sid = sid
-        return self._request("GET", path, deadline)
+        reused = self.sid is not None
+        if not reused:
+            self._authenticate(deadline)
+        try:
+            return self._request("GET", path, deadline)
+        except AuthExpiredError:
+            if not reused:
+                raise
+            self._authenticate(deadline)
+            return self._request("GET", path, deadline)
 
     def close(self):
         if self.sid:
@@ -211,8 +230,10 @@ def collect_queries(api, start, end, deadline):
         payload = api.get(path, deadline)
         batch = objects(payload.get("queries"), PAGE_SIZE)
         total, anchor = payload.get("recordsFiltered"), payload.get("cursor")
-        if type(total) is not int or total < 0 or total > MAX_QUERIES:
+        if type(total) is not int or total < 0:
             raise DnsError("DNS query window is unavailable or exceeds 5,000 records; checkpoint preserved.")
+        if total > MAX_QUERIES:
+            raise WindowTooLargeError("DNS query window exceeds 5,000 records; checkpoint preserved.")
         earliest = number(payload.get("earliest_timestamp"))
         if earliest is None or earliest <= 0 or earliest > start:
             raise DnsError("Pi-hole no longer has the checkpoint's in-memory history; collection needs review.")
@@ -289,17 +310,23 @@ class DnsSource:
             self.error = "Saved DNS checkpoint could not be read; collection stopped to preserve it."
 
     def _save(self, state):
-        with tempfile.NamedTemporaryFile(mode="w", dir=self.path.parent, prefix=".pihole-", delete=False) as temp:
-            try:
-                json.dump(state, temp, allow_nan=False)
-                temp.flush()
-                os.fsync(temp.fileno())
-                os.replace(temp.name, self.path)
-                with self.lock:
-                    self.state = state
-            finally:
-                if os.path.exists(temp.name):
-                    os.unlink(temp.name)
+        temp = self.path.parent / f".{self.path.name}.tmp"
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.chmod(temp, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                fd = -1
+                json.dump(state, handle, allow_nan=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, self.path)
+            with self.lock:
+                self.state = state
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            if temp.exists():
+                temp.unlink()
 
     def poll_once(self):
         if not self.config.enabled or self.storage_error or not self.poll_lock.acquire(blocking=False):
@@ -322,10 +349,19 @@ class DnsSource:
             pending = self.state["pending"]
             if pending is None:
                 start = self.state["through"]
-                end = min(int(self.clock()) - SETTLE_SECONDS, start + 300)
-                if end <= start:
+                limit_end = min(int(self.clock()) - SETTLE_SECONDS, start + 300)
+                if limit_end <= start:
                     return
-                rows = collect_queries(self.api, start, end, deadline)
+                span = limit_end - start
+                while True:
+                    end = start + span
+                    try:
+                        rows = collect_queries(self.api, start, end, deadline)
+                        break
+                    except WindowTooLargeError:
+                        if span <= 1:
+                            raise
+                        span = max(1, span // 2)
                 pending = {"end": end, "rows": rows}
                 self._save({**self.state, "pending": pending})
             # Persist the exact batch before send, so an ambiguous retry is identical.

@@ -139,7 +139,7 @@ def ops_queries(start, end, now, networks=NETWORKS):
         f"| sort by (bytes) desc limit {TALKER_FETCH}"
     )
     queries["blocks"] = (
-        f'{_span(start, end)} app_name:=filterlog "block" '
+        f"{_span(start, end)} app_name:=filterlog action:=block "
         f"| sort by (_time) desc | limit {BLOCK_CAP} | fields _time, _msg"
     )
     dns = f"{_span(start, end)} app_name:=pihole-dns"

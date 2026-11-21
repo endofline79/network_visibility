@@ -185,7 +185,7 @@ class LiveRead(unittest.TestCase):
                 self.queries.append(query)
                 if "dpinger" in query:
                     return [{"_time": stamp(NOW), "_msg": "dpinger: WAN_DHCP 203.0.113.1: Clear latency 1ms loss 0%"}]
-                if '"block"' in query:
+                if "action:=block" in query:
                     return [{"_time": stamp(NOW), "_msg": BLOCK}]
                 if "stats by (domain)" in query:
                     return [{"domain": "example.com", "queries": "3"}]
@@ -226,7 +226,7 @@ class LiveRead(unittest.TestCase):
                     raise QueryError("dst")
                 if "dpinger" in query:
                     return []
-                if '"block"' in query or "stats by (domain)" in query or "client_ip" in query:
+                if "action:=block" in query or "stats by (domain)" in query or "client_ip" in query:
                     return []
                 if "stats by (src_addr)" in query:
                     return [{"src_addr": "192.168.5.10", "bytes": "10"}]

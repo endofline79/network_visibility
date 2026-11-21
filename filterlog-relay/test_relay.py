@@ -145,6 +145,62 @@ class ServerTests(unittest.TestCase):
             sock.close()
             thread.join(2)
 
+    def test_permanent_insert_error_drops_batch_instead_of_hanging(self):
+        calls = []
+
+        def reject(rows):
+            calls.append(len(rows))
+            raise relay.PermanentInsertError('insert rejected: 400')
+
+        server = relay.Relay(reject, NETWORKS)
+        self.assertTrue(server._flush([{'_msg': 'bad'}]))
+        self.assertEqual(calls, [1])
+
+    def test_stop_event_aborts_transient_retry(self):
+        stop = threading.Event()
+        calls = []
+
+        def fail(_rows):
+            calls.append(1)
+            stop.set()
+            raise RuntimeError('insert failed: 503')
+
+        server = relay.Relay(fail, NETWORKS, stop=stop)
+        self.assertFalse(server._flush([{'_msg': 'retry'}]))
+        self.assertEqual(calls, [1])
+
+    def test_oversized_batch_splits_automatically(self):
+        sent = []
+        original_limit = relay.MAX_BATCH_BYTES
+        relay.MAX_BATCH_BYTES = 200
+        try:
+            class FakeResp:
+                status = 200
+                def read(self, _n):
+                    return b''
+
+            class FakeConn:
+                def __init__(self, *_a, **_kw):
+                    pass
+                def request(self, _method, _path, body, _headers):
+                    sent.append(body)
+                def getresponse(self):
+                    return FakeResp()
+                def close(self):
+                    pass
+
+            old_conn = relay.http.client.HTTPConnection
+            relay.http.client.HTTPConnection = FakeConn
+            try:
+                rows = [{'_time': STAMP, 'hostname': 'h', 'app_name': 'a', '_msg': 'x' * 70} for _ in range(4)]
+                relay.post_jsonlines('http://logs:9428', rows)
+            finally:
+                relay.http.client.HTTPConnection = old_conn
+            self.assertEqual(len(sent), 4)
+            self.assertTrue(all(len(chunk) <= 200 for chunk in sent))
+        finally:
+            relay.MAX_BATCH_BYTES = original_limit
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -4,7 +4,6 @@ import json
 import os
 from pathlib import Path
 import signal
-import tempfile
 import threading
 import time
 
@@ -12,16 +11,24 @@ from backend.pihole import Config, DnsSource, forward
 from backend.unifi import Inventory
 
 
-def save(path, value):
-    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as out:
-        try:
+def save(path, value, *, sync=True):
+    path = Path(path)
+    tmp = path.parent / f".{path.name}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.chmod(tmp, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            fd = -1
             json.dump(value, out, allow_nan=False)
             out.flush()
-            os.fsync(out.fileno())
-            os.replace(out.name, path)
-        finally:
-            if os.path.exists(out.name):
-                os.unlink(out.name)
+            if sync:
+                os.fsync(out.fileno())
+        os.replace(tmp, path)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        if tmp.exists():
+            tmp.unlink()
 
 
 def records(source, snapshot):
@@ -102,7 +109,7 @@ def main():
                 archives[name].poll(status.get("snapshot") if not status["stale"] else None)
                 status.pop("snapshot", None)
             save(root / "telemetry-status.json", {"updated_at": time.time(), "sources": sources,
-                 "snapshot_archives": {name: archive.status() for name, archive in archives.items()}})
+                 "snapshot_archives": {name: archive.status() for name, archive in archives.items()}}, sync=False)
             stop.wait(5)
     finally:
         # Signal both before joining, keeping shutdown within Compose grace time.

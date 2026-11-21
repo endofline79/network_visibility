@@ -61,3 +61,27 @@ class Tests(unittest.TestCase):
             db = collector.database(path)
             self.assertEqual(db.execute("SELECT id FROM pending").fetchone()[0], event["event_id"])
             db.close()
+
+    def test_enqueue_batch_tracks_accepted_duplicates_and_overflow(self):
+        with tempfile.TemporaryDirectory() as folder:
+            db = collector.database(Path(folder) / "pending.sqlite3")
+            first = collector.normalize(record())
+            second = collector.normalize({**record(), "src_port": 9999})
+            third = collector.normalize({**record(), "src_port": 8888})
+            with patch.object(collector, "MAX_PENDING", 3):
+                accepted, duplicates, overflow = collector.enqueue_batch(db, [first, first, second])
+                self.assertEqual((accepted, duplicates, overflow), (2, 1, 0))
+                accepted, duplicates, overflow = collector.enqueue_batch(db, [third, third])
+                self.assertEqual((accepted, duplicates, overflow), (1, 0, 1))
+            db.close()
+
+    def test_invalid_reasons_are_bounded_and_counted(self):
+        with collector.lock:
+            collector.stats["invalid_records"] = 0
+            collector.stats["invalid_reasons"].clear()
+        collector._record_invalid("Missing FreeBSD counters")
+        collector._record_invalid("Missing FreeBSD counters")
+        collector._record_invalid("Invalid exporter timestamp")
+        self.assertEqual(collector.stats["invalid_records"], 3)
+        self.assertEqual(collector.stats["invalid_reasons"]["Missing FreeBSD counters"], 2)
+        self.assertEqual(collector.stats["invalid_reasons"]["Invalid exporter timestamp"], 1)

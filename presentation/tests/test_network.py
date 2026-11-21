@@ -9,6 +9,7 @@ from backend.filterlog import parse_filterlog
 from backend.network import (
     BLOCK_SAMPLE,
     Directory,
+    _port_text,
     attribute_sites,
     category_for,
     client_expr,
@@ -18,7 +19,9 @@ from backend.network import (
     host_queries,
     live_overview,
     overview_queries,
+    reduce_dns,
     reduce_firewall_sample,
+    reduce_host,
 )
 from backend.service import stamp
 
@@ -65,6 +68,36 @@ class Queries(unittest.TestCase):
         self.assertNotIn('bad"name', expr)
         self.assertNotIn("has space", expr)
 
+    def test_directory_avoids_colliding_and_pihole_client_names(self):
+        directory = Directory.build([], [
+            {"ip": "192.168.5.119", "name": "iPhone.occido.net", "source": "pihole"},
+            {"ip": "192.168.5.131", "name": "iPhone.occido.net", "source": "pihole"},
+            {"ip": "192.168.5.140", "name": "SharedTV", "source": "unifi"},
+            {"ip": "192.168.5.141", "name": "SharedTV", "source": "unifi"},
+            {"ip": "192.168.5.142", "name": "UniqueHost", "source": "unifi"},
+        ])
+        self.assertEqual(client_expr(directory.known("192.168.5.119")), '(client_ip:="192.168.5.119")')
+        self.assertEqual(client_expr(directory.known("192.168.5.131")), '(client_ip:="192.168.5.131")')
+        self.assertEqual(client_expr(directory.known("192.168.5.140")), '(client_ip:="192.168.5.140")')
+        self.assertIn('client_name:="UniqueHost"', client_expr(directory.known("192.168.5.142")))
+
+    def test_firewall_queries_use_parsed_action_and_host_series_excludes_lan_dst(self):
+        start = NOW - timedelta(seconds=3600)
+        ov = overview_queries(start, NOW, 3600)
+        fw = firewall_queries(start, NOW, 3600)
+        host = host_queries(start, NOW, 3600, "192.168.5.142", '(client_ip:="192.168.5.142")')
+        self.assertIn("action:=block", ov["blocks"])
+        self.assertNotIn('",block,"', ov["blocks"])
+        self.assertIn("action:=block", fw["blocked"])
+        self.assertIn("action:=pass", fw["allowed"])
+        self.assertIn("action:=block", fw["series"])
+        self.assertIn("action:=block", fw["sample"])
+        self.assertIn('action:=block src:="192.168.5.142"', host["fw_blocks"])
+        self.assertIn("NOT src_addr:ipv4_range", host["series"])
+        self.assertIn("blocked_dns_total", host)
+        dns = dns_queries(start, NOW, 3600)
+        self.assertIn("stats by (client_ip) count() queries, max(client_name) client_name", dns["clients"])
+
 
 class Reducers(unittest.TestCase):
     def test_categories_use_the_longest_suffix(self):
@@ -95,6 +128,65 @@ class Reducers(unittest.TestCase):
         ])
         self.assertEqual([site["name"] for site in sites], ["netflix.com"])
         self.assertTrue(all("queries" in site for site in sites))
+
+    def test_attribute_sites_preserves_subdomain_categories(self):
+        sites, _count, _capped = attribute_sites(1000, 200, [
+            {"domain": "music.youtube.com", "queries": "10"},
+            {"domain": "stun.l.google.com", "queries": "5"},
+        ])
+        by_name = {site["name"]: site for site in sites}
+        self.assertEqual(by_name["youtube.com"]["category"], "Music")
+        self.assertEqual(by_name["google.com"]["category"], "STUN")
+
+    def test_reduce_host_uses_blocked_dns_total_beyond_tag_cap(self):
+        record = Directory.build([], []).resolve("h-192-168-5-10")
+        view = reduce_host(
+            record,
+            {
+                "download": [{"bytes": "1000"}],
+                "upload": [{"bytes": "200"}],
+                "series": [],
+                "sites": [{"domain": "example.com", "queries": "10"}],
+                "blocked_dns": [{"domain": f"ad{i}.example", "queries": "10"} for i in range(12)],
+                "blocked_dns_total": [{"queries": "450"}],
+                "fw_blocks": [{"blocks": "3"}],
+            },
+            NOW,
+            3600,
+            NOW,
+        )
+        self.assertEqual(view["blocked_total"], 450)
+        self.assertEqual(view["firewall_blocks"], 3)
+
+    def test_reduce_dns_merges_duplicate_client_ips(self):
+        view = reduce_dns(
+            {
+                "fresh": [{"_time": stamp(NOW)}],
+                "series": [],
+                "domains": [],
+                "clients": [
+                    {"client_ip": "192.168.5.107", "client_name": "", "queries": "100"},
+                    {"client_ip": "192.168.5.107", "client_name": "RokuPremiere.occido.net", "queries": "50"},
+                ],
+                "blocked_clients": [{"client_ip": "192.168.5.107", "queries": "120"}],
+                "unique": [{"domains": "5"}],
+                "totals": [{"outcome": "blocked", "queries": "120"}, {"outcome": "cached", "queries": "30"}],
+            },
+            Directory.build([], []),
+            NOW,
+            3600,
+            NOW,
+        )
+        self.assertEqual(len(view["clients"]), 1)
+        self.assertEqual(view["clients"][0]["queries"], 150)
+        self.assertEqual(view["clients"][0]["blocked"], 120)
+        self.assertEqual(view["clients"][0]["name"], "RokuPremiere.occido.net")
+
+    def test_port_text_empty_and_portless_multicast_service_label(self):
+        self.assertEqual(_port_text([]), ("", None))
+        icmp_mcast = "5,,,rule-uuid,igc1,match,block,in,4,0x0,,1,12345,0,none,2,igmp,32,192.168.5.50,224.0.0.22,datalength=8"
+        sample = reduce_firewall_sample([{"_time": stamp(NOW), "_msg": icmp_mcast}], Directory.build([], []))
+        self.assertEqual(sample["destinations"][0]["label"], "Multicast")
 
     def test_firewall_sample_groups_blocks_and_skips_passes(self):
         rows = [
@@ -251,6 +343,26 @@ class Routes(unittest.TestCase):
         self.assertEqual(body["range"], "7d")
         self.assertFalse(body["deduped"])
         self.assertGreater(body["totals"]["bytes"], body["hosts"][0]["download_bytes"])
+
+    def test_live_network_cache_reuses_and_isolates_copies(self):
+        from backend.app import _network_cache, _network_cached
+        from backend.inventory import load_inventory
+
+        _network_cache.clear()
+        calls = []
+
+        def build():
+            calls.append(1)
+            return {"count": len(calls), "items": [1]}
+
+        first = _network_cached(("test", "1h"), build)
+        first["items"].append(2)
+        second = _network_cached(("test", "1h"), build)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(second["items"], [1])
+        inv1 = load_inventory()
+        inv2 = load_inventory()
+        self.assertIs(inv1, inv2)
 
 
 if __name__ == "__main__":

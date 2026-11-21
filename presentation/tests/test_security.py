@@ -41,6 +41,7 @@ assert c.post('/api/destinations',json={}).status_code==405
 assert c.post('/api/session/login',json={'username':'viewer-test','password':'test-only-password'}).status_code==403
 r=c.post('/api/session/login',headers={'Origin':'https://testserver'},json={'username':'viewer-test','password':'test-only-password'})
 assert r.status_code==200
+assert r.headers.get('strict-transport-security')=='max-age=31536000'
 cookie=r.headers['set-cookie'].lower()
 assert 'secure' in cookie and 'httponly' in cookie and 'samesite=strict' in cookie
 assert 'test-only-password' not in cookie
@@ -104,4 +105,29 @@ print('authenticated-session-contract-ok')
    c=QueryClient()
    with self.assertRaises(QueryError) as cm:c.query('test',time.monotonic()+5)
    self.assertNotIn('CANARY',str(cm.exception));self.assertEqual(Connection.sent[0:2],('POST','/select/logsql/query'));self.assertEqual(tls.call_count,1)
+ def test_query_client_caches_ssl_context_and_honors_env_target(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   ca=Path(tmp)/'ca.crt';ca.write_text('dummy-ca')
+   tok=Path(tmp)/'token';tok.write_text('secret-token')
+   class Response:
+    status=200
+    def __init__(self):self._done=False
+    def read1(self,_n):
+     if self._done:return b''
+     self._done=True
+     return b'{"ok":"1"}\n'
+   seen=[]
+   class Connection:
+    def __init__(self,host,port,**kwargs):seen.append((host,port));self.sock=None
+    def request(self,*args):pass
+    def getresponse(self):return Response()
+    def close(self):pass
+   env={'TELEMETRY_API_HOST':'api','TELEMETRY_API_PORT':'8427','TELEMETRY_CA_FILE':str(ca),'TELEMETRY_TOKEN_FILE':str(tok)}
+   with patch.dict(os.environ,env,clear=False),patch('backend.client.ssl.create_default_context',return_value=object()) as tls,patch('backend.client.http.client.HTTPSConnection',Connection):
+    import time
+    c=QueryClient()
+    self.assertEqual(c.query('a',time.monotonic()+5),[{'ok':'1'}])
+    self.assertEqual(c.query('b',time.monotonic()+5),[{'ok':'1'}])
+    self.assertEqual(tls.call_count,1)
+    self.assertEqual(seen,[('api',8427),('api',8427)])
 if __name__=='__main__':unittest.main()

@@ -228,6 +228,7 @@ def demo_host(end, seconds, host_id, now=None):
         "sites_capped": False,
         "sites": sites,
         "blocked": blocked,
+        "blocked_total": sum(item["queries"] for item in blocked),
         "blocked_state": "available",
         "firewall_blocks": _firewall_for(host_id, seconds),
         "throughput": {
