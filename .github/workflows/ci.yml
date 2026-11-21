@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit-and-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: presentation/requirements-test.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: presentation/frontend/package-lock.json
+
+      - name: Install presentation test dependencies
+        run: python -m pip install -r presentation/requirements-test.txt
+
+      - name: Run Python unit tests
+        run: |
+          (cd presentation && python -m unittest discover -s tests -p 'test_*.py' -v)
+          PYTHONPATH=alerter:dashboard/backend python -m unittest discover -s alerter -p 'test_*.py' -v
+          PYTHONPATH=dashboard:telemetry python -m unittest discover -s telemetry -v
+          PYTHONPATH=dashboard python -m unittest dashboard/tests/test_pihole.py dashboard/tests/test_unifi.py -v
+          PYTHONPATH=filterlog-relay python -m unittest discover -s filterlog-relay -v
+          PYTHONPATH=collector python -m unittest discover -s collector -v
+          python -m unittest discover -s tests -v
+
+      - name: Install and verify presentation frontend
+        working-directory: presentation
+        run: |
+          npm --prefix frontend ci --ignore-scripts --no-audit --no-fund
+          node tests/chart_fit_unit.mjs
+          node tests/map_history_unit.cjs
+          npm --prefix frontend run format:check
+          npm --prefix frontend run build
+
+  compose-and-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Compose files
+        run: |
+          docker compose --env-file .env.example config --quiet
+          docker compose -f compose.presentation.yaml config --quiet
+
+      - name: Build service images (verifies .dockerignore and in-container tests)
+        run: |
+          docker compose --env-file .env.example build telemetry filterlog-relay flows alerter
+          docker build ./presentation

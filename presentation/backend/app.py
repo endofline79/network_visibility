@@ -139,14 +139,26 @@ def network_firewall(range:Literal['1h','24h','7d']='24h',end:datetime|None=None
         log.warning('network firewall failed: %s',type(exc).__name__)
         raise HTTPException(503,'Firewall view cannot be validated right now') from None
 @app.get('/api/network/dns')
-def network_dns(range:Literal['1h','24h','7d']='24h',end:datetime|None=None):
+def network_dns(range:Literal['1h','24h','7d']='24h',host:str|None=None,end:datetime|None=None):
     anchor=_anchor(end);seconds=_RANGE_SECONDS[range]
+    host_id=None
+    if host is not None and host!='':
+        if len(host)>80 or not all(ch.isalnum() or ch in '-_.' for ch in host):
+            raise HTTPException(404,'Host was not found')
+        host_id=host.lower()
     if MODE=='demo':
         from .network_demo import demo_dns
-        return demo_dns(anchor,seconds)
+        payload=demo_dns(anchor,seconds,host_id=host_id)
+        if payload is None:raise HTTPException(404,'Host was not found')
+        return payload
     from .network import Directory,live_dns
     from .service import service
-    try:return _network_cached(('dns',range,anchor.isoformat()),lambda:live_dns(service.client,anchor,seconds,Directory.from_sources(host_cache)))
+    directory=Directory.from_sources(host_cache)
+    record=None
+    if host_id is not None:
+        record=directory.resolve(host_id)
+        if record is None:raise HTTPException(404,'Host was not found')
+    try:return _network_cached(('dns',range,anchor.isoformat(),record['id'] if record else ''),lambda:live_dns(service.client,anchor,seconds,directory,record=record))
     except Exception as exc:
         log.warning('network dns failed: %s',type(exc).__name__)
         raise HTTPException(503,'DNS view cannot be validated right now') from None

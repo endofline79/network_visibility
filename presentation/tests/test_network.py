@@ -337,6 +337,16 @@ class Routes(unittest.TestCase):
         self.assertIn("answered", dns["series"]["points"][0])
         self.assertIn("blocked", dns["series"]["points"][0])
         self.assertGreater(dns["clients"][0]["blocked"], 0)
+        self.assertIsNone(dns["host"])
+        host_dns = self.client.get("/api/network/dns", params={"range": "24h", "host": "apple-tv"})
+        self.assertEqual(host_dns.status_code, 200)
+        host_dns_body = host_dns.json()
+        self.assertEqual(host_dns_body["host"]["id"], "apple-tv")
+        self.assertEqual(len(host_dns_body["clients"]), 1)
+        self.assertEqual(self.client.get("/api/network/dns", params={"host": "not-a-host"}).status_code, 404)
+        filtered_q = dns_queries(NOW - timedelta(seconds=3600), NOW, 3600, expr='(client_ip:="192.168.5.142")')
+        self.assertIn('client_ip:="192.168.5.142"', filtered_q["domains"])
+        self.assertIn('client_ip:="192.168.5.142"', filtered_q["totals"])
 
     def test_week_stays_aggregated(self):
         body = self.client.get("/api/network/overview", params={"range": "7d"}).json()

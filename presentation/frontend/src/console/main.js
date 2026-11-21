@@ -38,6 +38,7 @@ const P = {
   chev: '<path d="m9 6 6 6-6 6"/>',
   back: '<path d="m15 6-6 6 6 6"/>',
   layers: '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>',
+  refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
 };
 const CATC = {
   Streaming: "#2dd4bf",
@@ -252,7 +253,13 @@ function routeOf() {
   if (page === "firewall")
     return { kind: "firewall", id: "", url: `/api/network/firewall?${q}` };
   if (page === "dns")
-    return { kind: "dns", id: "", url: `/api/network/dns?${q}` };
+    return {
+      kind: "dns",
+      id,
+      url: id
+        ? `/api/network/dns?${q}&host=${encodeURIComponent(id)}`
+        : `/api/network/dns?${q}`,
+    };
   if (page === "alerts") return { kind: "alerts", id: "", url: "/api/alerts" };
   if (page === "settings") return { kind: "settings", id: "", url: "" };
   return { kind: "overview", id: "", url: `/api/network/overview?${q}` };
@@ -594,7 +601,8 @@ function healthLine(health) {
 function topbar({ title, health, crumb, icon, sub, data }) {
   const badge =
     data && data.illustrative ? `<span class="badge">Example data</span>` : "";
-  return `<div class="top"><div>${crumb ? `<div class="crumb">${crumb}</div>` : ""}<div class="ttl">${icon ? `<div class="hicon">${ic(icon)}</div>` : ""}<div><h1 title="${esc(title)}">${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ""}${health || ""}</div></div></div><div class="right">${badge}${pill()}</div></div>`;
+  const refreshBtn = `<button type="button" class="refbtn" data-act="refresh" aria-label="Refresh" title="Refresh">${ic("refresh", 'width="15" height="15"')}</button>`;
+  return `<div class="top"><div>${crumb ? `<div class="crumb">${crumb}</div>` : ""}<div class="ttl">${icon ? `<div class="hicon">${ic(icon)}</div>` : ""}<div><h1 title="${esc(title)}">${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ""}${health || ""}</div></div></div><div class="right">${badge}${pill()}${refreshBtn}</div></div>`;
 }
 function kpi(icon, cls, label, val, sub, tip) {
   const title = tip ? ` title="${esc(tip)}"` : "";
@@ -798,7 +806,7 @@ function hostPage(data) {
     }</div><div style="margin-top:16px;padding-top:14px;border-top:1px solid #1c2433"><h3 style="margin-bottom:10px;font-size:13px"><span>Blocked <span class="h3s">— ${who}</span></span></h3><div class="blk">${tags}${fwChip}${none}</div></div></div></div>` +
     `<div class="grid"><div class="card"><h3>By category</h3><div class="donut"><svg width="140" height="140" viewBox="0 0 140 140" style="flex:none"><circle cx="70" cy="70" r="52" fill="none" stroke="#1c2433" stroke-width="16"/>${segs}<text x="70" y="68" text-anchor="middle" fill="#e6ebf3" font-size="18" font-weight="650" class="num">${esc(num)}</text><text x="70" y="86" text-anchor="middle" fill="#8b96a8" font-size="11">${esc(unit)}</text></svg><div class="dleg">${catArr.map(([c, v]) => `<div><i style="background:${CATC[c] || "#64748b"}"></i><span>${esc(c)}<small>${fBytes(v)}</small></span><span class="pc">${((100 * v) / denom).toFixed(0)}%</span></div>`).join("") || `<div class="note">No categories.</div>`}</div></div></div>` +
     `<div class="card"><h3><span>Throughput <span class="h3s">— ${esc(windowLabel(data))}</span></span></h3><div class="statline"><b>${total == null ? "—" : fMbps(mbps(total, data.window.seconds))}</b><span>average</span></div>${chartBox("hthr", 150)}</div>` +
-    `<div class="card" style="padding:14px 20px"><div class="note" style="margin:0">${esc(data.site_note || "")} <a href="#/dns">DNS for this host →</a></div></div></div></div>` +
+    `<div class="card" style="padding:14px 20px"><div class="note" style="margin:0">${esc(data.site_note || "")} <a href="#/dns/${encodeURIComponent(h.id)}">DNS for this host →</a></div></div></div></div>` +
     foot(data)
   );
 }
@@ -900,8 +908,17 @@ function dnsPage(data) {
   const queries = data.queries;
   const blockedN = data.blocked;
   const pct = queries ? ((100 * blockedN) / queries).toFixed(1) : "—";
+  const host = data.host;
+  const crumb = host
+    ? `<a href="#/dns">${ic("back", 'width="12" height="12" style="vertical-align:-1px"')} All DNS</a><span class="sep">/</span><a href="#/host/${encodeURIComponent(host.id)}">${esc(host.name)}</a><span class="sep">·</span><span class="num">${esc(host.ip)}</span>`
+    : "";
   return (
-    topbar({ title: "DNS", health: healthLine(data.health), data }) +
+    topbar({
+      title: host ? `DNS · ${host.name}` : "DNS",
+      crumb,
+      health: healthLine(data.health),
+      data,
+    }) +
     `<div class="kpis">${kpi("globe", "c-teal", "Queries", queries == null ? "—" : fN(queries), esc(windowLabel(data)))}<div class="card kpi"><div class="ki c-coral">${ic("shieldx")}</div><div><div class="kl">Blocked</div><div class="kv num" style="color:var(--coral)">${pct === "—" ? "—" : `${pct}%`}</div><div class="ks">${blockedN == null ? "—" : fN(blockedN)} queries</div></div></div>${kpi("layers", "c-violet", "Unique domains", data.unique_domains == null ? "—" : fInt(data.unique_domains), esc(windowLabel(data)))}</div>` +
     `<div class="card" style="margin-bottom:16px"><h3><span>Queries over time <span class="h3s">— ${esc(windowLabel(data))}</span></span><span class="legend"><span><i style="background:var(--teal)"></i>Answered</span><span><i style="background:var(--coral)"></i>Pi-hole blocked</span></span></h3>${chartBox("dnsc", 190)}</div>` +
     `<div class="grid split even"><div class="card"><h3>Top domains</h3><div class="rows">${domains
@@ -1023,6 +1040,12 @@ document.addEventListener("click", (e) => {
   if (toggle) {
     state.showAll = !state.showAll;
     render();
+    return;
+  }
+  const refresh = e.target.closest("[data-act='refresh']");
+  if (refresh) {
+    cache.clear();
+    show(true);
     return;
   }
   const logout = e.target.closest("[data-act='logout']");

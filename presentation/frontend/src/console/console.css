@@ -306,6 +306,23 @@ main {
   background: #232c3d;
   color: var(--text);
 }
+.refbtn {
+  all: unset;
+  cursor: pointer;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  background: #121826;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  transition: 0.15s;
+}
+.refbtn:hover {
+  color: var(--text);
+  border-color: var(--line2);
+}
 .card {
   background: var(--card);
   border: 1px solid var(--line);

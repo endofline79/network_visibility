@@ -466,8 +466,8 @@ def firewall_queries(start, end, seconds):
     }
 
 
-def dns_queries(start, end, seconds):
-    span = f"{_span(start, end)} app_name:=pihole-dns"
+def dns_queries(start, end, seconds, expr=None):
+    span = f"{_span(start, end)} app_name:=pihole-dns" + (f" {expr}" if expr else "")
     step = _step(seconds)
     look = _span(end - timedelta(hours=6), end)
     queries = {
@@ -1178,7 +1178,7 @@ def _clean_name(value):
     return text
 
 
-def reduce_dns(results, directory, end, seconds, now, mode="live"):
+def reduce_dns(results, directory, end, seconds, now, mode="live", record=None):
     start = end - timedelta(seconds=seconds)
     step = STEPS[seconds]
     answered_rows = []
@@ -1272,6 +1272,11 @@ def reduce_dns(results, directory, end, seconds, now, mode="live"):
         "queries": total_queries if totals_ok else None,
         "blocked": blocked_queries if totals_ok else None,
         "unique_domains": scalar_int(results.get("unique"), "domains"),
+        "host": (
+            {"id": record["id"], "name": record["name"], "ip": record["ip"]}
+            if record
+            else None
+        ),
         "series": {"step_seconds": step, "points": series},
         "domains": domains,
         "clients": clients,
@@ -1306,9 +1311,10 @@ def live_firewall(client, end, seconds, directory, now=None):
     return view
 
 
-def live_dns(client, end, seconds, directory, now=None):
+def live_dns(client, end, seconds, directory, now=None, record=None):
     now = (now or datetime.now(UTC)).astimezone(UTC)
     end = end.astimezone(UTC)
     start = end - timedelta(seconds=seconds)
-    results = run_all(client, dns_queries(start, end, seconds))
-    return reduce_dns(results, directory, end, seconds, now)
+    expr = client_expr(record) if record else None
+    results = run_all(client, dns_queries(start, end, seconds, expr=expr))
+    return reduce_dns(results, directory, end, seconds, now, record=record)

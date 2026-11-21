@@ -297,11 +297,51 @@ def demo_firewall(end, seconds, now=None):
     return payload
 
 
-def demo_dns(end, seconds, now=None):
+def demo_dns(end, seconds, now=None, host_id=None):
     now = now or end
     scale = DNSQ[seconds]
-    queries = round(84200 * scale)
-    blocked = round(queries * 9515 / 84200)
+    selected_host = None
+    if host_id is not None:
+        row = BY_ID.get(host_id)
+        if row is None:
+            return None
+        selected_host = {"id": row[0], "name": row[1], "ip": row[2]}
+        base_q = next((count for ident, count in DNS_CLIENTS if ident == host_id), 1200)
+        queries = max(1, round(base_q * scale))
+        tag_sum = sum(item[1] for item in row[10])
+        blocked = min(queries, max(0, round(tag_sum * scale)))
+        unique = max(len(row[9]), round(row[8] * scale * 2))
+        domains = [
+            {"name": name, "queries": max(1, round(queries * share)), "category": category_for(name)}
+            for name, share, _up in row[9]
+            if name != "other"
+        ][:6]
+        clients = [{
+            "id": row[0], "name": row[1], "ip": row[2], "icon": row[5],
+            "queries": queries, "blocked": blocked, "link": True,
+        }]
+    else:
+        queries = round(84200 * scale)
+        blocked = round(queries * 9515 / 84200)
+        unique = UNIQUE[seconds]
+        domains = [
+            {"name": name, "queries": max(1, round(count * scale)), "category": category_for(name)}
+            for name, count in DNS_DOMAINS
+        ]
+        clients = []
+        for ident, count in DNS_CLIENTS:
+            row = BY_ID[ident]
+            scaled = max(1, round(count * scale))
+            tag_sum = sum(item[1] for item in row[10])
+            clients.append({
+                "id": ident,
+                "name": row[1],
+                "ip": row[2],
+                "icon": row[5],
+                "queries": scaled,
+                "blocked": round(scaled * tag_sum / count) if count else 0,
+                "link": True,
+            })
     answered_total = max(0, queries - blocked)
     start = end - timedelta(seconds=seconds)
     answered_points, _index = weighted_points(start, end, STEPS[seconds], answered_total, None)
@@ -309,31 +349,14 @@ def demo_dns(end, seconds, now=None):
     series = []
     for left, right in zip(answered_points, blocked_points):
         series.append({"time": left["time"], "answered": left["value"], "blocked": right["value"]})
-    domains = [
-        {"name": name, "queries": max(1, round(count * scale)), "category": category_for(name)}
-        for name, count in DNS_DOMAINS
-    ]
-    clients = []
-    for ident, count in DNS_CLIENTS:
-        row = BY_ID[ident]
-        scaled = max(1, round(count * scale))
-        tag_sum = sum(item[1] for item in row[10])
-        clients.append({
-            "id": ident,
-            "name": row[1],
-            "ip": row[2],
-            "icon": row[5],
-            "queries": scaled,
-            "blocked": round(scaled * tag_sum / count) if count else 0,
-            "link": True,
-        })
     payload = _base(end, seconds, now)
     payload.update({
         "state": "available",
         "health": _healthy(DNS_LABEL, "query log"),
         "queries": queries,
         "blocked": blocked,
-        "unique_domains": UNIQUE[seconds],
+        "unique_domains": unique,
+        "host": selected_host,
         "series": {"step_seconds": STEPS[seconds], "points": series},
         "domains": domains,
         "clients": clients,
