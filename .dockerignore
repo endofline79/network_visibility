@@ -1,4 +1,6 @@
 **
+!alerter/
+!alerter/**
 !filterlog-relay/
 !filterlog-relay/**
 !presentation/
@@ -10,6 +12,7 @@
 !collector/**
 !telemetry/
 !telemetry/**
+alerter/__pycache__/
 telemetry/__pycache__/
 collector/__pycache__/
 dashboard/frontend/node_modules/
