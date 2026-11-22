@@ -39,6 +39,7 @@ class Reducers(unittest.TestCase):
         observations = {
             "filterlog": seen(5 * 60),
             "opnsense-flow": seen(200),
+            "opnsense-flow-health": seen(45),
             "unifi-snapshot": seen(16 * 60),
             "pihole-dns": seen(31 * 60),
             "pihole-snapshot": [],
@@ -48,6 +49,7 @@ class Reducers(unittest.TestCase):
         view = {item["id"]: item for item in reduce_freshness(observations, NOW)}
         self.assertEqual(view["filterlog"]["state"], "info")
         self.assertEqual(view["opnsense-flow"]["state"], "fresh")
+        self.assertEqual(view["opnsense-flow-health"]["state"], "fresh")
         self.assertEqual(view["unifi-snapshot"]["state"], "warning")
         self.assertEqual(view["pihole-dns"]["state"], "critical")
         self.assertEqual(view["pihole-snapshot"]["state"], "critical")
@@ -58,7 +60,7 @@ class Reducers(unittest.TestCase):
 
     def test_failed_freshness_stays_unavailable(self):
         observations = {spec: None for spec in (
-            "filterlog", "opnsense-flow", "unifi-snapshot", "pihole-dns",
+            "filterlog", "opnsense-flow", "opnsense-flow-health", "unifi-snapshot", "pihole-dns",
             "pihole-snapshot", "opnsense-syslog", "visibility-alert",
         )}
         observations["filterlog"] = [{"_time": "not-a-time"}]
@@ -216,7 +218,7 @@ class LiveRead(unittest.TestCase):
         self.assertEqual(view["blocks"]["rows"][0]["count"], 1)
         self.assertEqual(view["dns"]["domains"][0]["name"], "example.com")
         self.assertEqual(view["gateway"]["state"], "up")
-        self.assertTrue(all("schema:=2" in query or "opnsense-flow" not in query for query in client.queries))
+        self.assertTrue(all("schema:=2" in query or "app_name:=opnsense-flow " not in query for query in client.queries))
         self.assertTrue(any("stats by (event_id, src_addr)" in query for query in client.queries))
 
     def test_one_failed_panel_stays_partial_and_total_failure_raises(self):

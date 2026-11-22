@@ -25,6 +25,15 @@ records are dropped and counted. Retries are at-least-once; the Traffic API
 deduplicates event IDs before summing. All logs retains receipt duplicates.
 Container limits: 1 CPU, 512 MiB, read-only root, no capabilities, non-root user.
 
+Every 60 seconds (`FLOW_HEARTBEAT_SECONDS`), `collector.py` also inserts one
+compact `app_name=opnsense-flow-health` (`kind=heartbeat`, `hostname=ai-02`) row
+into VictoriaLogs containing cumulative and per-interval delta counters
+(`decoded_delta`, `invalid_delta`, `decoder_errors_delta`, `sqlite_errors_delta`,
+`overflow_delta`, `pending_records`, `insert_error`, `last_flow_age_seconds`).
+Both `alerter` (`source-freshness:opnsense-flow-health` and `flow-collector`
+rules) and Ops Home monitor this stream so a quiet network can be distinguished
+from a stalled or erroring collector.
+
 ### Important FreeBSD compatibility mapping
 
 FreeBSD sends IN_BYTES/IN_PKTS followed by zero OUT_BYTES/OUT_PKTS. The decoder's

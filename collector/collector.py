@@ -23,6 +23,8 @@ from pathlib import Path
 EXPORTER = os.getenv("FLOW_EXPORTER", "192.168.5.1")
 LOG_URL = os.getenv("VICTORIALOGS_URL", "http://logs:9428")
 STATE = Path(os.getenv("FLOW_STATE_DIR", "/state"))
+HEALTH_HOSTNAME = os.getenv("FLOW_HEALTH_HOSTNAME", "ai-02")
+HEARTBEAT_INTERVAL = max(0, int(os.getenv("FLOW_HEARTBEAT_SECONDS", "60")))
 MAX_PENDING = 100000
 ENQUEUE_BATCH_SIZE = 50
 ENQUEUE_FLUSH_SECONDS = 0.25
@@ -32,7 +34,8 @@ stats = {"started_at": time.time(), "datagrams": 0, "rejected_datagrams": 0,
          "decoded_records": 0, "duplicate_records": 0, "invalid_records": 0,
          "invalid_reasons": {}, "sqlite_errors": 0, "overflow_records": 0,
          "inserted_records": 0, "last_datagram": None, "last_decoded": None,
-         "last_insert": None, "insert_error": False, "pending_records": 0}
+         "last_insert": None, "insert_error": False, "pending_records": 0,
+         "last_heartbeat": None, "heartbeat_error": False}
 
 
 def normalize(raw):
@@ -166,6 +169,133 @@ def proxy():
     outgoing.close()
 
 
+def _delta(current, previous):
+    if current is None or previous is None:
+        return 0
+    return max(0, int(current) - int(previous))
+
+
+def collect_status(running, now=None):
+    now = time.time() if now is None else now
+    with lock:
+        status = {**stats, "invalid_reasons": dict(stats["invalid_reasons"])}
+    status["running"] = bool(running)
+    status["exporter"] = EXPORTER
+    status["stale"] = not status["last_decoded"] or now - status["last_decoded"] > 180
+    status["buffer_limit"] = MAX_PENDING
+    status["decoder_errors"] = None
+    status["udp_receive_errors"] = None
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8080/metrics", timeout=2) as metrics:
+            lines = metrics.read(1024 * 1024).decode().splitlines()
+        status["decoder_errors"] = sum(
+            int(float(line.rsplit(" ", 1)[1]))
+            for line in lines
+            if line.startswith("goflow2_flow_decoder_error_total{")
+        )
+        udp = [
+            line.split()[1:]
+            for line in Path("/proc/net/snmp").read_text().splitlines()
+            if line.startswith("Udp:")
+        ]
+        status["udp_receive_errors"] = int(dict(zip(udp[0], udp[1]))["InErrors"])
+    except Exception:
+        pass
+    return status
+
+
+def build_heartbeat(status, previous=None, now=None):
+    now = time.time() if now is None else now
+    prev = previous or {}
+    decoded_delta = _delta(status.get("decoded_records"), prev.get("decoded_records"))
+    invalid_delta = _delta(status.get("invalid_records"), prev.get("invalid_records"))
+    decoder_err_delta = _delta(status.get("decoder_errors"), prev.get("decoder_errors"))
+    sqlite_err_delta = _delta(status.get("sqlite_errors"), prev.get("sqlite_errors"))
+    overflow_delta = _delta(status.get("overflow_records"), prev.get("overflow_records"))
+    last_decoded = status.get("last_decoded")
+    last_flow_age = None if not last_decoded else max(0, int(now - float(last_decoded)))
+    uptime = max(0, int(now - float(status.get("started_at") or now)))
+    pending = int(status.get("pending_records") or 0)
+    return {
+        "_time": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+        "_msg": (
+            f"opnsense-flow-health decoded=+{decoded_delta} invalid=+{invalid_delta} "
+            f"decoder_err=+{decoder_err_delta} sqlite_err=+{sqlite_err_delta} "
+            f"overflow=+{overflow_delta} pending={pending}"
+        ),
+        "hostname": HEALTH_HOSTNAME,
+        "app_name": "opnsense-flow-health",
+        "kind": "heartbeat",
+        "schema": "1",
+        "exporter": status.get("exporter", EXPORTER),
+        "running": bool(status.get("running", True)),
+        "stale": bool(status.get("stale", False)),
+        "insert_error": bool(status.get("insert_error", False)),
+        "pending_records": pending,
+        "buffer_limit": int(status.get("buffer_limit") or MAX_PENDING),
+        "datagrams": int(status.get("datagrams") or 0),
+        "datagrams_delta": _delta(status.get("datagrams"), prev.get("datagrams")),
+        "rejected_datagrams": int(status.get("rejected_datagrams") or 0),
+        "rejected_datagrams_delta": _delta(status.get("rejected_datagrams"), prev.get("rejected_datagrams")),
+        "decoded_records": int(status.get("decoded_records") or 0),
+        "decoded_delta": decoded_delta,
+        "duplicate_records": int(status.get("duplicate_records") or 0),
+        "duplicate_delta": _delta(status.get("duplicate_records"), prev.get("duplicate_records")),
+        "invalid_records": int(status.get("invalid_records") or 0),
+        "invalid_delta": invalid_delta,
+        "sqlite_errors": int(status.get("sqlite_errors") or 0),
+        "sqlite_errors_delta": sqlite_err_delta,
+        "overflow_records": int(status.get("overflow_records") or 0),
+        "overflow_delta": overflow_delta,
+        "inserted_records": int(status.get("inserted_records") or 0),
+        "inserted_delta": _delta(status.get("inserted_records"), prev.get("inserted_records")),
+        "decoder_errors": status.get("decoder_errors"),
+        "decoder_errors_delta": decoder_err_delta,
+        "udp_receive_errors": status.get("udp_receive_errors"),
+        "udp_receive_errors_delta": _delta(status.get("udp_receive_errors"), prev.get("udp_receive_errors")),
+        "last_flow_age_seconds": last_flow_age,
+        "uptime_seconds": uptime,
+    }
+
+
+def post_heartbeat(record):
+    body = (json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n").encode()
+    request = urllib.request.Request(
+        LOG_URL + "/insert/jsonline?_stream_fields=hostname,app_name",
+        data=body,
+        headers={"Content-Type": "application/stream+json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            if response.status != 200:
+                raise RuntimeError("Heartbeat insert rejected")
+            response.read(4096)
+        with lock:
+            stats["last_heartbeat"] = time.time()
+            stats["heartbeat_error"] = False
+        return True
+    except Exception:
+        with lock:
+            stats["heartbeat_error"] = True
+        return False
+
+
+def heartbeat_loop(is_running):
+    if HEARTBEAT_INTERVAL <= 0:
+        return
+    interval = max(10, HEARTBEAT_INTERVAL)
+    previous = None
+    if stop.wait(min(5, interval)):
+        return
+    while not stop.is_set():
+        status = collect_status(is_running())
+        record = build_heartbeat(status, previous=previous)
+        if post_heartbeat(record):
+            previous = status
+        stop.wait(interval)
+
+
 def main():
     os.umask(0o077)
     STATE.mkdir(exist_ok=True)
@@ -174,30 +304,16 @@ def main():
         "-addr", "127.0.0.1:8080", "-mapping", "/app/mapping.yaml", "-loglevel", "error"], stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, bufsize=0)
     workers = [threading.Thread(target=f, daemon=True) for f in (proxy, writer)]
-    for worker in workers:
+    is_running = lambda: decoder.poll() is None and all(t.is_alive() for t in workers)
+    hb = threading.Thread(target=heartbeat_loop, args=(is_running,), daemon=True)
+    for worker in (*workers, hb):
         worker.start()
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path not in ("/health", "/status"):
                 self.send_error(404)
                 return
-            with lock:
-                status = {**stats, "invalid_reasons": dict(stats["invalid_reasons"])}
-            status["running"] = decoder.poll() is None and all(t.is_alive() for t in workers)
-            status["exporter"] = EXPORTER
-            status["stale"] = not status["last_decoded"] or time.time()-status["last_decoded"] > 180
-            status["buffer_limit"] = MAX_PENDING
-            status["decoder_errors"] = None
-            status["udp_receive_errors"] = None
-            try:
-                with urllib.request.urlopen('http://127.0.0.1:8080/metrics', timeout=2) as metrics:
-                    lines = metrics.read(1024*1024).decode().splitlines()
-                status['decoder_errors'] = sum(int(float(line.rsplit(' ', 1)[1])) for line in lines
-                    if line.startswith('goflow2_flow_decoder_error_total{'))
-                udp = [line.split()[1:] for line in Path('/proc/net/snmp').read_text().splitlines() if line.startswith('Udp:')]
-                status['udp_receive_errors'] = int(dict(zip(udp[0], udp[1]))['InErrors'])
-            except Exception:
-                pass
+            status = collect_status(is_running())
             self.send_response(200 if status["running"] else 503)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -272,7 +388,7 @@ def main():
         if decoder.poll() is None:
             decoder.terminate()
         decoder.wait(timeout=10)
-        for worker in workers:
+        for worker in (*workers, hb):
             worker.join(timeout=12)
         db.close()
         http.shutdown()

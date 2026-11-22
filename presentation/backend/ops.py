@@ -52,6 +52,14 @@ SOURCES = (
         "critical_seconds": CRITICAL_SECONDS,
     },
     {
+        "id": "opnsense-flow-health",
+        "title": "NetFlow collector heartbeat",
+        "query": "app_name:=opnsense-flow-health kind:=heartbeat",
+        "cadence_seconds": 90,
+        "warning_seconds": WARNING_SECONDS,
+        "critical_seconds": CRITICAL_SECONDS,
+    },
+    {
         "id": "unifi-snapshot",
         "title": "UniFi inventory",
         "query": "app_name:=unifi-snapshot entity_kind:=snapshot",

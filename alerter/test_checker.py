@@ -178,15 +178,53 @@ class Evaluation(unittest.TestCase):
         critical = iso(NOW - timedelta(minutes=31))
         state = blank_state()
         conditions = evaluate(cfg, obs(sources={
-            "filterlog": fresh, "opnsense-flow": lagging, "unifi-snapshot": warning,
-            "pihole-dns": critical, "pihole-snapshot": None, "opnsense-syslog": fresh,
+            "filterlog": fresh, "opnsense-flow": lagging, "opnsense-flow-health": fresh,
+            "unifi-snapshot": warning, "pihole-dns": critical,
+            "pihole-snapshot": None, "opnsense-syslog": fresh,
         }), state)
         tiers = {subject: severity for severity, subject in names(conditions, "source-freshness")}
         self.assertNotIn("filterlog", tiers)
+        self.assertNotIn("opnsense-flow-health", tiers)
         self.assertEqual(tiers["opnsense-flow"], "info")
         self.assertEqual(tiers["unifi-snapshot"], "warning")
         self.assertEqual(tiers["pihole-dns"], "critical")
         self.assertEqual(tiers["pihole-snapshot"], "critical")
+
+    def test_flow_collector_alerts(self):
+        cfg = config()
+        clean = evaluate(cfg, obs(flow_health=[{
+            "pending_records": "0", "overflow_delta": "0", "sqlite_errors_delta": "0",
+            "decoder_errors_delta": "0", "invalid_delta": "0", "insert_error": "false",
+        }]), blank_state())
+        self.assertEqual(names(clean, "flow-collector"), [])
+
+        warn = evaluate(cfg, obs(flow_health=[{
+            "pending_records": "6000", "overflow_delta": "0", "sqlite_errors_delta": "0",
+            "decoder_errors_delta": "2", "invalid_delta": "150", "insert_error": "false",
+        }]), blank_state())
+        self.assertEqual(
+            sorted(names(warn, "flow-collector")),
+            [("warning", "collector-errors"), ("warning", "invalid-flows"), ("warning", "spool-backlog")],
+        )
+
+        crit = evaluate(cfg, obs(flow_health=[{
+            "pending_records": "55000", "overflow_delta": "3", "sqlite_errors_delta": "1",
+            "decoder_errors_delta": "0", "invalid_delta": "0", "insert_error": "true",
+        }]), blank_state())
+        self.assertEqual(
+            sorted(names(crit, "flow-collector")),
+            [("critical", "collector-errors"), ("critical", "spool-backlog")],
+        )
+
+        # Query failure holds firing flow-collector alerts instead of resolving prematurely.
+        state = blank_state()
+        cfg["rules"]["flow-collector"]["fire_after_seconds"] = 0
+        state, _ = apply(state, crit, NOW, cfg)
+        held = evaluate(cfg, obs(flow_health=None), state)
+        self.assertEqual(
+            sorted(names(held, "flow-collector")),
+            [("critical", "collector-errors"), ("critical", "spool-backlog")],
+        )
 
     def test_certificate_tiers_and_private_key(self):
         cfg = config()

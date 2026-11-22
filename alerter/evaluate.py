@@ -30,6 +30,7 @@ class Observation:
         self.block_recent = kwargs.get("block_recent")
         self.block_baseline = kwargs.get("block_baseline")
         self.entities = kwargs.get("entities")
+        self.flow_health = kwargs.get("flow_health")
 
 
 def _cond(rule, subject, severity, summary, evidence, details=None):
@@ -413,6 +414,78 @@ def new_entities(config, obs, state):
     return conditions
 
 
+def _int_field(row, key):
+    try:
+        return int(float(row.get(key) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _bool_field(row, key):
+    val = row.get(key)
+    if isinstance(val, bool):
+        return val
+    return str(val or "").strip().lower() == "true"
+
+
+def flow_collector(config, obs, state):
+    spec = config.get("flow_health") or {}
+    if not spec:
+        return []
+    if obs.flow_health is None:
+        return _firing(state, "flow-collector")
+    if not obs.flow_health:
+        return []
+    latest = obs.flow_health[0]
+    evidence = spec.get("query") or "_time:15m app_name:=opnsense-flow-health kind:=heartbeat | sort by (_time) desc | limit 10"
+    conditions = []
+
+    pending = _int_field(latest, "pending_records")
+    pending_crit = int(spec.get("pending_critical", 50000))
+    pending_warn = int(spec.get("pending_warning", 5000))
+    if pending >= pending_crit:
+        conditions.append(_cond(
+            "flow-collector", "spool-backlog", "critical",
+            f"NetFlow collector spool backlog reached {pending} pending records.",
+            evidence, {"pending_records": pending, "threshold": pending_crit}))
+    elif pending >= pending_warn:
+        conditions.append(_cond(
+            "flow-collector", "spool-backlog", "warning",
+            f"NetFlow collector spool backlog reached {pending} pending records.",
+            evidence, {"pending_records": pending, "threshold": pending_warn}))
+
+    overflow = _int_field(latest, "overflow_delta")
+    sqlite_err = _int_field(latest, "sqlite_errors_delta")
+    decoder_err = _int_field(latest, "decoder_errors_delta")
+    insert_err = _bool_field(latest, "insert_error")
+    if overflow > 0 or sqlite_err > 0:
+        conditions.append(_cond(
+            "flow-collector", "collector-errors", "critical",
+            f"NetFlow collector dropped or failed to spool flows (overflow=+{overflow}, sqlite_errors=+{sqlite_err}).",
+            evidence, {
+                "overflow_delta": overflow, "sqlite_errors_delta": sqlite_err,
+                "decoder_errors_delta": decoder_err, "insert_error": insert_err,
+            }))
+    elif decoder_err > 0 or insert_err:
+        conditions.append(_cond(
+            "flow-collector", "collector-errors", "warning",
+            f"NetFlow collector reported decoder or insert errors (decoder_errors=+{decoder_err}, insert_error={insert_err}).",
+            evidence, {
+                "overflow_delta": overflow, "sqlite_errors_delta": sqlite_err,
+                "decoder_errors_delta": decoder_err, "insert_error": insert_err,
+            }))
+
+    invalid_delta = _int_field(latest, "invalid_delta")
+    invalid_warn = int(spec.get("invalid_delta_warning", 100))
+    if invalid_delta >= invalid_warn:
+        conditions.append(_cond(
+            "flow-collector", "invalid-flows", "warning",
+            f"NetFlow collector rejected {invalid_delta} invalid flow records in the last heartbeat interval.",
+            evidence, {"invalid_delta": invalid_delta, "threshold": invalid_warn}))
+
+    return conditions
+
+
 def rate_limit(config, state):
     if not state.get("rate_limited"):
         return []
@@ -440,6 +513,7 @@ def evaluate(config, obs, state):
     conditions.extend(gateway(config, obs, state))
     conditions.extend(wan_ingress(config, obs))
     conditions.extend(block_spike(config, obs, state))
+    conditions.extend(flow_collector(config, obs, state))
     conditions.extend(new_entities(config, obs, state))
     conditions.extend(rate_limit(config, state))
     if sources_failed and not any(item["rule"] == "query-errors" for item in conditions):

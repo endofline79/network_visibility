@@ -27,6 +27,7 @@
   "sources": [
     {"id": "filterlog", "title": "OPNsense firewall", "query": "app_name:=filterlog", "cadence_seconds": 120, "lookback": "6h"},
     {"id": "opnsense-flow", "title": "NetFlow", "query": "app_name:=opnsense-flow schema:=2", "cadence_seconds": 300, "lookback": "6h"},
+    {"id": "opnsense-flow-health", "title": "NetFlow collector heartbeat", "query": "app_name:=opnsense-flow-health kind:=heartbeat", "cadence_seconds": 90, "lookback": "6h"},
     {"id": "unifi-snapshot", "title": "UniFi inventory", "query": "app_name:=unifi-snapshot entity_kind:=snapshot", "cadence_seconds": 90, "lookback": "6h"},
     {"id": "pihole-dns", "title": "Pi-hole DNS", "query": "app_name:=pihole-dns", "cadence_seconds": 180, "lookback": "6h"},
     {"id": "pihole-snapshot", "title": "Pi-hole summary", "query": "app_name:=pihole-snapshot entity_kind:=snapshot", "cadence_seconds": 90, "lookback": "6h"},
@@ -88,8 +89,15 @@
     "min_baseline": 5
   },
   "new_entities": {"dwell_seconds": 86400, "max_tracked": 5000},
+  "flow_health": {
+    "query": "_time:5m app_name:=opnsense-flow-health kind:=heartbeat | sort by (_time) desc | limit 5",
+    "pending_warning": 5000,
+    "pending_critical": 50000,
+    "invalid_delta_warning": 100
+  },
   "rules": {
     "source-freshness": {"fire_after_seconds": 0, "resolve_after_seconds": 180, "renotify_seconds": 3600},
+    "flow-collector": {"fire_after_seconds": 120, "resolve_after_seconds": 180, "renotify_seconds": 1800},
     "new-entity": {"fire_after_seconds": 0, "resolve_after_seconds": 0, "renotify_seconds": 86400, "notify": "never"},
     "cert-expiry": {"fire_after_seconds": 0, "resolve_after_seconds": 300, "renotify_seconds": 86400},
     "cert-pin": {"fire_after_seconds": 0, "resolve_after_seconds": 300, "renotify_seconds": 3600},

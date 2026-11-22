@@ -497,6 +497,10 @@ def collect(config, now):
                 "kind": "DHCP client", "name": mac, "ip": match.group("ip"),
                 "evidence_query": f'_time:24h "{mac}" | limit 5',
             }
+    flow_health_rows = None
+    flow_health_cfg = config.get("flow_health") or {}
+    if flow_health_cfg.get("query"):
+        flow_health_rows = _safe_query(base, flow_health_cfg["query"], timeout, errors)
     private_key = any(value == "private-key" for value in certs.values())
     return Observation(
         now,
@@ -514,6 +518,7 @@ def collect(config, now):
         block_recent=block_recent,
         block_baseline=block_baseline,
         entities=entities,
+        flow_health=flow_health_rows,
     ), {"query_errors": len(errors), "private_key_mounted": private_key}
 
 

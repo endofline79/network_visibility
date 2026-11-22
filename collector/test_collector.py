@@ -85,3 +85,64 @@ class Tests(unittest.TestCase):
         self.assertEqual(collector.stats["invalid_records"], 3)
         self.assertEqual(collector.stats["invalid_reasons"]["Missing FreeBSD counters"], 2)
         self.assertEqual(collector.stats["invalid_reasons"]["Invalid exporter timestamp"], 1)
+
+    def test_build_heartbeat_deltas_resets_and_post(self):
+        first = {
+            "started_at": 1_700_000_000.0,
+            "datagrams": 10,
+            "rejected_datagrams": 0,
+            "decoded_records": 100,
+            "duplicate_records": 2,
+            "invalid_records": 1,
+            "sqlite_errors": 0,
+            "overflow_records": 0,
+            "inserted_records": 98,
+            "decoder_errors": 3,
+            "udp_receive_errors": 0,
+            "pending_records": 4,
+            "buffer_limit": 100000,
+            "last_decoded": 1_700_000_050.0,
+            "insert_error": False,
+            "running": True,
+            "stale": False,
+            "exporter": "192.168.5.1",
+        }
+        hb1 = collector.build_heartbeat(first, previous=None, now=1_700_000_060.0)
+        self.assertEqual(hb1["app_name"], "opnsense-flow-health")
+        self.assertEqual(hb1["kind"], "heartbeat")
+        self.assertEqual(hb1["decoded_delta"], 0)
+        self.assertEqual(hb1["last_flow_age_seconds"], 10)
+        self.assertEqual(hb1["uptime_seconds"], 60)
+
+        second = {
+            **first,
+            "datagrams": 25,
+            "decoded_records": 250,
+            "invalid_records": 6,
+            "decoder_errors": 5,
+            "sqlite_errors": 1,
+            "overflow_records": 2,
+            "pending_records": 12,
+        }
+        hb2 = collector.build_heartbeat(second, previous=first, now=1_700_000_120.0)
+        self.assertEqual(hb2["datagrams_delta"], 15)
+        self.assertEqual(hb2["decoded_delta"], 150)
+        self.assertEqual(hb2["invalid_delta"], 5)
+        self.assertEqual(hb2["decoder_errors_delta"], 2)
+        self.assertEqual(hb2["sqlite_errors_delta"], 1)
+        self.assertEqual(hb2["overflow_delta"], 2)
+        self.assertIn("decoded=+150", hb2["_msg"])
+
+        reset = {**first, "decoded_records": 5, "decoder_errors": None}
+        hb3 = collector.build_heartbeat(reset, previous=second, now=1_700_000_180.0)
+        self.assertEqual(hb3["decoded_delta"], 0)
+        self.assertEqual(hb3["decoder_errors_delta"], 0)
+
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        with patch.object(collector.urllib.request, "urlopen", return_value=response):
+            self.assertTrue(collector.post_heartbeat(hb2))
+            self.assertFalse(collector.stats["heartbeat_error"])
+        with patch.object(collector.urllib.request, "urlopen", side_effect=OSError("down")):
+            self.assertFalse(collector.post_heartbeat(hb2))
+            self.assertTrue(collector.stats["heartbeat_error"])
