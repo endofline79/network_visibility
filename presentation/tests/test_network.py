@@ -81,6 +81,43 @@ class Queries(unittest.TestCase):
         self.assertEqual(client_expr(directory.known("192.168.5.140")), '(client_ip:="192.168.5.140")')
         self.assertIn('client_name:="UniqueHost"', client_expr(directory.known("192.168.5.142")))
 
+    def test_directory_and_queries_support_multi_ip_known_hosts(self):
+        directory = Directory.build([], [
+            {
+                "id": "opnsense",
+                "name": "OPNsense",
+                "ip": "192.168.5.1",
+                "ips": ["192.168.5.1", "10.10.20.1"],
+                "class": "router",
+                "source": "known-hosts",
+                "notes": "Core firewall",
+            },
+        ])
+        rec_lan = directory.known("192.168.5.1")
+        rec_infra = directory.known("10.10.20.1")
+        self.assertIs(rec_lan, rec_infra)
+        self.assertEqual(rec_lan["id"], "opnsense")
+        self.assertEqual(rec_lan["icon"], "router")
+        self.assertEqual(rec_lan["type"], "Firewall")
+        expr = client_expr(rec_lan)
+        self.assertIn('client_ip:="192.168.5.1"', expr)
+        self.assertIn('client_ip:="10.10.20.1"', expr)
+        start = NOW - timedelta(seconds=3600)
+        q = host_queries(start, NOW, 3600, rec_lan["ips"], expr)
+        self.assertIn('(src_addr:="192.168.5.1" OR src_addr:="10.10.20.1")', q["upload"])
+        self.assertIn('(src:="192.168.5.1" OR src:="10.10.20.1")', q["fw_blocks"])
+        from backend.network import merge_host_traffic
+        hosts, _other, _oh, _state, _cap = merge_host_traffic(
+            [{"src_addr": "192.168.5.1", "bytes": "100"}, {"src_addr": "10.10.20.1", "bytes": "250"}],
+            [{"dst_addr": "192.168.5.1", "bytes": "400"}],
+            directory,
+            750,
+        )
+        self.assertEqual(len(hosts), 1)
+        self.assertEqual(hosts[0]["id"], "opnsense")
+        self.assertEqual(hosts[0]["upload_bytes"], 350)
+        self.assertEqual(hosts[0]["download_bytes"], 400)
+
     def test_firewall_queries_use_parsed_action_and_host_series_excludes_lan_dst(self):
         start = NOW - timedelta(seconds=3600)
         ov = overview_queries(start, NOW, 3600)

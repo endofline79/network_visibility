@@ -1,14 +1,15 @@
-"""In-memory host-name cache for a later planner.
+"""In-memory host-name cache for the console and a later planner.
 
 Merge priority, highest first:
-1. iot-hosts.yaml (hand overrides, keyed by MAC and IP)
-2. UniFi snapshot clients and devices (MAC is the identity; IP is the latest sample)
-3. OPNsense dnsmasq-dhcp DHCPACK leases (MAC, IP, and optional hostname)
-4. Pi-hole client_name (IP only)
+1. iot-hosts.yaml (IoT/streaming allowlist, keyed by MAC and IP)
+2. known-hosts.yaml (optional hand-curated static/wired/infra hosts, keyed by MAC and IP(s))
+3. UniFi snapshot clients and devices (MAC is the identity; IP is the latest sample)
+4. OPNsense dnsmasq-dhcp DHCPACK leases (MAC, IP, and optional hostname)
+5. Pi-hole client_name (IP only)
 
 Static or non-OPNsense-DHCP wired clients that UniFi does not see stay unnamed
-unless Pi-hole has a client_name or the allowlist lists them.
-Refresh is about five minutes. Queries are fixed strings; allowlist values are
+unless Pi-hole has a client_name or iot-hosts.yaml / known-hosts.yaml lists them.
+Refresh is about five minutes. Queries are fixed strings; static host values are
 validated and are not interpolated into LogsQL.
 """
 
@@ -19,12 +20,14 @@ import re
 import threading
 import time
 from pathlib import Path
+import yaml
 
 
 DHCP_GAP = (
     'OPNsense dnsmasq-dhcp DHCPACK leases are read when present, but there is no '
     'full ARP table feed. Static or non-OPNsense-DHCP wired clients that UniFi '
-    'does not see stay unnamed unless Pi-hole has a client_name or iot-hosts.yaml lists them.'
+    'does not see stay unnamed unless Pi-hole has a client_name or iot-hosts.yaml / '
+    'known-hosts.yaml lists them.'
 )
 UNIFI_CLIENTS = (
     '_time:15m app_name:=unifi-snapshot (entity_kind:=client OR entity_kind:=device)'
@@ -43,8 +46,11 @@ PIHOLE_CLIENTS = (
 )
 DHCPACK_RE = re.compile(r'^DHCPACK\([^)]+\)\s+(\S+)\s+([0-9a-fA-F:]{17})(?:\s+(\S+))?$')
 MAX_HOSTS = 16
+MAX_KNOWN_HOSTS = 64
+MAX_IPS_PER_HOST = 8
 ID_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,31}$')
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._'()-]{0,79}$")
+NOTES_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._'(),/:-]{0,199}$")
 DNS_RE = re.compile(
     r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'
 )
@@ -289,6 +295,149 @@ def _from_inventory(path):
         return None
 
 
+def resolve_known_hosts_path():
+    configured = os.getenv('KNOWN_HOSTS_FILE')
+    if configured:
+        path = Path(configured)
+        if path.is_file():
+            return path
+    return None
+
+
+def _validate_known_host(host, index):
+    if index > MAX_KNOWN_HOSTS:
+        raise ValueError(f'known-hosts.yaml allows at most {MAX_KNOWN_HOSTS} hosts')
+    if not isinstance(host, dict):
+        raise ValueError(f'host {index}: expected mapping')
+    allowed = {'id', 'class', 'name', 'dns_names', 'ip', 'ips', 'mac', 'notes'}
+    extra = set(host) - allowed
+    if extra:
+        raise ValueError(f'host {index}: unknown field')
+    for key in ('id', 'class', 'name'):
+        if key not in host or not isinstance(host[key], str):
+            raise ValueError(f'host {index}: {key} is required')
+    if not ID_RE.fullmatch(host['id']) or not ID_RE.fullmatch(host['class']):
+        raise ValueError(f'host {index}: id and class must be short tokens')
+    if not NAME_RE.fullmatch(host['name']):
+        raise ValueError(f'host {index}: name has unsupported characters')
+    raw_dns = host.get('dns_names')
+    if raw_dns is None:
+        raw_dns = []
+    if not isinstance(raw_dns, list) or len(raw_dns) > 4:
+        raise ValueError(f'host {index}: dns_names must be a list of at most 4 names')
+    cleaned_dns = []
+    for name in raw_dns:
+        if not isinstance(name, str):
+            raise ValueError(f'host {index}: dns name is invalid')
+        lowered = name.lower()
+        if len(lowered) > 253 or not DNS_RE.fullmatch(lowered):
+            raise ValueError(f'host {index}: dns name is invalid')
+        cleaned_dns.append(lowered)
+    ips = []
+    if 'ip' in host and host['ip'] is not None:
+        if not isinstance(host['ip'], str):
+            raise ValueError(f'host {index}: ip is invalid')
+        parsed = normalize_ip(host['ip'])
+        if parsed is None:
+            raise ValueError(f'host {index}: ip is invalid')
+        ips.append(parsed)
+    if 'ips' in host and host['ips'] is not None:
+        if not isinstance(host['ips'], list) or len(host['ips']) > MAX_IPS_PER_HOST:
+            raise ValueError(f'host {index}: ips must be a list of at most {MAX_IPS_PER_HOST} addresses')
+        for raw_ip in host['ips']:
+            if not isinstance(raw_ip, str):
+                raise ValueError(f'host {index}: ip is invalid')
+            parsed = normalize_ip(raw_ip)
+            if parsed is None:
+                raise ValueError(f'host {index}: ip is invalid')
+            if parsed not in ips:
+                ips.append(parsed)
+    if len(ips) > MAX_IPS_PER_HOST:
+        raise ValueError(f'host {index}: too many ips')
+    mac = None
+    if 'mac' in host and host['mac'] is not None:
+        if not isinstance(host['mac'], str):
+            raise ValueError(f'host {index}: mac is invalid')
+        mac = normalize_mac(host['mac'])
+        if mac is None:
+            raise ValueError(f'host {index}: mac is invalid')
+    if not ips and not mac:
+        raise ValueError(f'host {index}: ip, ips, or mac is required')
+    notes = host.get('notes')
+    if notes is not None:
+        if not isinstance(notes, str) or len(notes) > 200 or not NOTES_RE.fullmatch(notes):
+            raise ValueError(f'host {index}: notes have unsupported characters')
+    return {
+        'id': host['id'],
+        'class': host['class'],
+        'name': host['name'],
+        'dns_names': cleaned_dns,
+        'ip': ips[0] if ips else None,
+        'ips': ips,
+        'mac': mac,
+        'notes': notes,
+    }
+
+
+def _unique_known(hosts):
+    seen_id, seen_mac, seen_ip = set(), set(), set()
+    for host in hosts:
+        if host['id'] in seen_id:
+            raise ValueError('duplicate host id')
+        seen_id.add(host['id'])
+        if host['mac']:
+            if host['mac'] in seen_mac:
+                raise ValueError('duplicate host mac')
+            seen_mac.add(host['mac'])
+        for ip in host.get('ips') or ([host['ip']] if host.get('ip') else []):
+            if ip in seen_ip:
+                raise ValueError('duplicate host ip')
+            seen_ip.add(ip)
+    if len(hosts) > MAX_KNOWN_HOSTS:
+        raise ValueError(f'known-hosts.yaml allows at most {MAX_KNOWN_HOSTS} hosts')
+    return hosts
+
+
+def parse_known_hosts(text):
+    """Parse and strictly validate an optional known-hosts.yaml document."""
+    if len(text.encode()) > 65536:
+        raise ValueError('known-hosts.yaml is too large')
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        raise ValueError('known-hosts.yaml could not be parsed') from None
+    if not isinstance(data, dict):
+        raise ValueError('known-hosts.yaml must be a mapping')
+    extra = set(data) - {'version', 'hosts'}
+    if extra:
+        raise ValueError('known-hosts.yaml has unknown top-level keys')
+    if 'version' in data and data['version'] != 1:
+        raise ValueError('known-hosts.yaml version must be 1')
+    raw_hosts = data.get('hosts')
+    if raw_hosts is None:
+        raise ValueError('known-hosts.yaml is missing hosts')
+    if not isinstance(raw_hosts, list):
+        raise ValueError('hosts must be a list')
+    return _unique_known([_validate_known_host(host, index) for index, host in enumerate(raw_hosts, 1)])
+
+
+def load_known_hosts(path):
+    if path is None:
+        return [], {'state': 'absent', 'count': 0, 'note': 'No known-hosts.yaml is configured.'}
+    try:
+        hosts = parse_known_hosts(path.read_text(encoding='utf-8'))
+    except OSError:
+        return [], {'state': 'absent', 'count': 0, 'note': 'known-hosts.yaml could not be read.'}
+    except (UnicodeError, ValueError):
+        return [], {
+            'state': 'error',
+            'count': 0,
+            'note': 'known-hosts.yaml failed validation; overrides withheld.',
+            'path': str(path),
+        }
+    return hosts, {'state': 'ok', 'count': len(hosts), 'path': str(path)}
+
+
 def load_iot_hosts(path):
     if path is None:
         return [], {'state': 'absent', 'count': 0, 'note': 'No iot-hosts.yaml is configured.'}
@@ -428,7 +577,7 @@ def _blank(name, source, mac=None, ip=None, seen=None, identity=None, host_class
     }
 
 
-def merge_hosts(iot, unifi, pihole, dhcp=()):
+def merge_hosts(iot, unifi, pihole, dhcp=(), known=()):
     """Return (hosts, ambiguous_ips). Higher-priority names win."""
     records = []
     by_mac = {}
@@ -471,6 +620,26 @@ def merge_hosts(iot, unifi, pihole, dhcp=()):
             by_mac[record['mac']] = record
         claim(record['ip'], record)
 
+    for host in known or ():
+        mac = host.get('mac')
+        host_ips = list(host.get('ips') or ([host['ip']] if host.get('ip') else []))
+        if mac and mac in by_mac:
+            continue
+        unclaimed_ips = [ip for ip in host_ips if ip not in claimed]
+        if not mac and not unclaimed_ips:
+            continue
+        primary_ip = unclaimed_ips[0] if unclaimed_ips else None
+        record = _blank(
+            host['name'], 'known-hosts', mac, primary_ip,
+            identity=host['id'], host_class=host['class'],
+            dns_names=host.get('dns_names'), notes=host.get('notes'),
+        )
+        records.append(record)
+        if mac:
+            by_mac[mac] = record
+        for ip in unclaimed_ips:
+            claim(ip, record)
+
     for client in unifi:
         mac = client['mac']
         if mac in by_mac:
@@ -511,7 +680,13 @@ def merge_hosts(iot, unifi, pihole, dhcp=()):
         claimed[ip] = record
 
     for record in records:
-        record['ips'] = sorted(set(record['ips']))
+        deduped = []
+        if record['ip']:
+            deduped.append(record['ip'])
+        for ip in sorted(set(record['ips'])):
+            if ip not in deduped:
+                deduped.append(ip)
+        record['ips'] = deduped
         if record['notes'] is None:
             record.pop('notes')
     records.sort(key=lambda item: ((item['name'] or '').lower(), item['mac'] or '', item['ip'] or ''))
@@ -529,6 +704,7 @@ class HostCache:
         self._stop = threading.Event()
         self._thread = None
         self._iot, self._iot_state = self._read_iot()
+        self._known, self._known_state = self._read_known()
         self._unifi = []
         self._dhcp = []
         self._pihole = []
@@ -546,6 +722,9 @@ class HostCache:
         if mounted_note and state.get('state') == 'ok':
             state['note'] = mounted_note
         return hosts, state
+
+    def _read_known(self):
+        return load_known_hosts(resolve_known_hosts_path())
 
     def start(self):
         if self._thread is not None:
@@ -575,11 +754,13 @@ class HostCache:
 
     def refresh(self):
         iot, iot_state = self._read_iot()
+        known, known_state = self._read_known()
         unifi_rows, unifi_flag = self._query(UNIFI_CLIENTS)
         dhcp_rows, dhcp_flag = self._query(DHCP_LEASES)
         pihole_rows, pihole_flag = self._query(PIHOLE_CLIENTS)
         with self._lock:
             self._iot, self._iot_state = iot, iot_state
+            self._known, self._known_state = known, known_state
             if unifi_flag == 'ok':
                 parsed, note = normalize_unifi(unifi_rows)
                 if note and 'cap' in note:
@@ -653,7 +834,9 @@ class HostCache:
 
     def snapshot(self):
         with self._lock:
-            hosts, ambiguous = merge_hosts(self._iot, self._unifi, self._pihole, self._dhcp)
+            hosts, ambiguous = merge_hosts(
+                self._iot, self._unifi, self._pihole, self._dhcp, known=self._known,
+            )
             refreshed = self._refreshed_at
             age = None if refreshed is None else self.clock() - refreshed
             stale = refreshed is None or not self._dynamic_ok or (
@@ -661,6 +844,7 @@ class HostCache:
             )
             sources = {
                 'iot-hosts': {key: value for key, value in self._iot_state.items() if value is not None},
+                'known-hosts': {key: value for key, value in self._known_state.items() if value is not None},
                 'unifi': {key: value for key, value in self._unifi_state.items() if value is not None},
                 'dhcp': {key: value for key, value in self._dhcp_state.items() if value is not None},
                 'pihole': {key: value for key, value in self._pihole_state.items() if value is not None},
@@ -687,9 +871,10 @@ class HostCache:
             if len(hits) == 1:
                 return {**hits[0], 'matched_on': 'mac'}
             if len(hits) > 1:
-                preferred = [host for host in hits if host['source'] == 'iot-hosts']
-                if len(preferred) == 1:
-                    return {**preferred[0], 'matched_on': 'mac'}
+                for preferred_source in ('iot-hosts', 'known-hosts'):
+                    preferred = [host for host in hits if host['source'] == preferred_source]
+                    if len(preferred) == 1:
+                        return {**preferred[0], 'matched_on': 'mac'}
                 return None
         if ip_key:
             if ip_key in view['ambiguous_ips']:

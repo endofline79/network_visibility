@@ -147,13 +147,21 @@ Merge order:
    file. An empty `hosts: []` file stays on the strict parser. At most 16 hosts.
    Values are checked before they can be reused in LogsQL; the cache queries
    themselves are fixed strings and do not interpolate the file.
-2. UniFi `app_name:=unifi-snapshot` clients and devices (`entity_kind:=client`
+2. `known-hosts.yaml` (optional, via `KNOWN_HOSTS_FILE`, mounted at
+   `/run/visibility/known-hosts.yaml` on AI-02 and kept outside Git). Covers
+   static infrastructure, wired boxes, and multi-homed gear (supports `ip`,
+   `ips`, `mac`, `dns_names`, `notes`; up to 64 hosts). Enriches `/api/hosts`
+   and all console views without expanding the IoT-only `/api/destinations`
+   allowlist. See `presentation/config/known-hosts.example.yaml` for the schema.
+   If absent, the source reports `state: absent` without marking the cache stale.
+3. UniFi `app_name:=unifi-snapshot` clients and devices (`entity_kind:=client`
    or `entity_kind:=device`) from the last 15 minutes, keyed by MAC. A hand
-   entry with the same MAC keeps its name and also matches the UniFi IP.
-3. OPNsense `app_name:=dnsmasq-dhcp` `DHCPACK` leases from the last 24 hours,
+   entry in `iot-hosts.yaml` or `known-hosts.yaml` with the same MAC keeps its
+   name and also matches the UniFi IP and `seen` timestamp.
+4. OPNsense `app_name:=dnsmasq-dhcp` `DHCPACK` leases from the last 24 hours,
    keyed by MAC, providing IP and hostname for DHCP-served wired/infra hosts
    that UniFi does not list.
-4. Pi-hole `client_name` over the last hour, by client IP, only when no
+5. Pi-hole `client_name` over the last hour, by client IP, only when no
    higher-priority source already has that IP.
 
 Refresh default is 300 seconds (`HOST_CACHE_REFRESH_SECONDS`). Live mode tries
@@ -164,8 +172,8 @@ single name.
 
 **Wired-client gap:** OPNsense `dnsmasq-dhcp` `DHCPACK` logs are read when
 present, but there is no full ARP table feed. Static or non-OPNsense-DHCP wired
-clients that appear in neither UniFi nor Pi-hole stay unresolved until an
-`iot-hosts.yaml` row is added.
+clients that appear in neither UniFi nor Pi-hole stay unresolved until listed in
+`known-hosts.yaml` or `iot-hosts.yaml`.
 
 ## llama-swap alias
 

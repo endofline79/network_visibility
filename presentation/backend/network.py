@@ -149,13 +149,13 @@ def presentation(name, kind, notes):
         return "tv", "Roku"
     if "samsung" in text and "tv" in text:
         return "tv", "Samsung TV"
-    if "synology" in text or " nas" in text or text.startswith("nas"):
+    if kind == "nas" or "synology" in text or " nas" in text or text.startswith("nas"):
         return "nas", "NAS"
     if kind == "switch" or "usw " in text:
         return "router", "Switch"
     if kind == "ap" or "u7 pro" in text:
         return "wifi", "Access point"
-    if "unifi" in text:
+    if kind == "controller" or "unifi" in text:
         return "wifi", "UniFi controller"
     if "sonos" in text:
         return "speaker", "Sonos"
@@ -165,17 +165,27 @@ def presentation(name, kind, notes):
         return "mic", "Smart speaker"
     if "thermostat" in text or "honeywell" in text:
         return "thermo", "Thermostat"
-    if "pi-hole" in text or "pihole" in text:
+    if kind == "dns" or "pi-hole" in text or "pihole" in text:
         return "dns", "DNS filter"
-    if "opnsense" in text or "firewall" in text:
+    if kind == "router" or "opnsense" in text or "firewall" in text:
         return "router", "Firewall"
-    if "server" in text or "ubuntu" in text or "ai-02" in text or "ai 02" in text:
+    if kind == "vm":
+        return "server", "Virtual machine"
+    if kind == "server" or "server" in text or "ubuntu" in text or "ai-02" in text or "ai 02" in text:
         return "server", "Server"
+    if kind == "phone" or "iphone" in text:
+        return "devices", "Phone"
+    if kind == "tablet" or "ipad" in text:
+        return "devices", "Tablet"
+    if kind == "printer" or "printer" in text:
+        return "monitor", "Printer"
+    if kind == "laptop":
+        return "monitor", "Laptop"
     if "tv" in text or kind == "streaming":
         return "tv", "Streaming device"
     if kind == "iot":
         return "mic", "IoT device"
-    if "workstation" in text:
+    if kind == "workstation" or "workstation" in text:
         return "monitor", "Workstation"
     return "monitor", "Host"
 
@@ -221,15 +231,25 @@ class Directory:
         by_id, by_ip = {}, {}
 
         def put(record):
-            ip = normalize_ip(record.get("ip"))
-            if not ip or ip in by_ip:
+            raw_ips = []
+            primary = normalize_ip(record.get("ip"))
+            if primary:
+                raw_ips.append(primary)
+            for item in record.get("ips") or ():
+                addr = normalize_ip(item)
+                if addr and addr not in raw_ips:
+                    raw_ips.append(addr)
+            available = [addr for addr in raw_ips if addr not in by_ip]
+            if not available:
                 return
+            ip = available[0]
             ident = record.get("id") or ""
             if not ID_RE.fullmatch(ident) or ident in by_id:
                 ident = "h-" + ip.replace(".", "-")
-            record = {**record, "id": ident, "ip": ip}
+            record = {**record, "id": ident, "ip": ip, "ips": available}
             by_id[ident] = record
-            by_ip[ip] = record
+            for addr in available:
+                by_ip[addr] = record
 
         for host in inventory or ():
             icon, kind = presentation(host.name, host.device_class, host.notes)
@@ -237,6 +257,7 @@ class Directory:
                 "id": host.id,
                 "name": host.name,
                 "ip": host.ip,
+                "ips": [host.ip] if host.ip else [],
                 "type": kind,
                 "location": location_from(host.notes),
                 "icon": icon,
@@ -259,6 +280,7 @@ class Directory:
                 "id": host.get("id") or "",
                 "name": name,
                 "ip": host.get("ip"),
+                "ips": list(host.get("ips") or ()),
                 "type": type_name,
                 "location": location_from(notes),
                 "icon": icon,
@@ -306,16 +328,15 @@ class Directory:
 
 
 def client_expr(record):
-    """IP plus inventory-safe names. Untrusted labels are not interpolated."""
-    parts = [f'client_ip:="{record["ip"]}"']
-    seen = set()
+    """IP(s) plus inventory-safe names. Untrusted labels are not interpolated."""
+    ips = list(record.get("ips") or ([record["ip"]] if record.get("ip") else []))
+    parts = [f'client_ip:="{addr}"' for addr in ips]
+    seen = set(ips)
     candidates = list(record.get("dns_names") or [])
     if record.get("match_name", True):
         candidates.insert(0, record.get("name"))
     for name in candidates:
         if not isinstance(name, str) or name in seen or not DNS_SAFE.fullmatch(name):
-            continue
-        if name == record["ip"]:
             continue
         seen.add(name)
         parts.append(f'client_name:="{name}"')
@@ -389,22 +410,31 @@ def overview_queries(start, end, seconds):
     return queries
 
 
+def _addr_expr(field, ips):
+    if len(ips) == 1:
+        return f'{field}:="{ips[0]}"'
+    return "(" + " OR ".join(f'{field}:="{addr}"' for addr in ips) + ")"
+
+
 def host_queries(start, end, seconds, ip, expr):
     flow = _flow(start, end)
     step = _step(seconds)
     span = _span(start, end)
-    quoted = f'"{ip}"'
+    ips = [ip] if isinstance(ip, str) else list(ip)
+    src_match = _addr_expr("src_addr", ips)
+    dst_match = _addr_expr("dst_addr", ips)
+    fw_src = _addr_expr("src", ips)
     dns = f"{span} app_name:=pihole-dns {expr}"
-    series_match = f"(src_addr:={quoted} OR (dst_addr:={quoted} {not_lan_filter('src_addr')}))"
+    series_match = f"({src_match} OR ({dst_match} {not_lan_filter('src_addr')}))"
     queries = {
-        "fw_blocks": f"{span} app_name:=filterlog action:=block src:={quoted} | stats count() blocks",
+        "fw_blocks": f"{span} app_name:=filterlog action:=block {fw_src} | stats count() blocks",
     }
     if deduped(seconds):
         queries["upload"] = (
-            f"{flow} src_addr:={quoted} | stats by (event_id) max(bytes) bytes | stats sum(bytes) bytes"
+            f"{flow} {src_match} | stats by (event_id) max(bytes) bytes | stats sum(bytes) bytes"
         )
         queries["download"] = (
-            f"{flow} dst_addr:={quoted} {not_lan_filter('src_addr')} "
+            f"{flow} {dst_match} {not_lan_filter('src_addr')} "
             "| stats by (event_id) max(bytes) bytes | stats sum(bytes) bytes"
         )
         queries["series"] = (
@@ -428,9 +458,9 @@ def host_queries(start, end, seconds, ip, expr):
             f"{dns} outcome:=blocked | stats by (event_id) count() rows | stats count() queries"
         )
     else:
-        queries["upload"] = f"{flow} src_addr:={quoted} | stats sum(bytes) bytes"
+        queries["upload"] = f"{flow} {src_match} | stats sum(bytes) bytes"
         queries["download"] = (
-            f"{flow} dst_addr:={quoted} {not_lan_filter('src_addr')} | stats sum(bytes) bytes"
+            f"{flow} {dst_match} {not_lan_filter('src_addr')} | stats sum(bytes) bytes"
         )
         queries["series"] = (
             f"{flow} {series_match} "
@@ -859,11 +889,24 @@ def merge_host_traffic(upload_rows, download_rows, directory, total_bytes):
         download_rows is not None and len(download_rows) >= HOST_FETCH
     )
     addresses = set(upload) | set(download)
-    hosts = []
-    for ip in addresses:
+    by_id = {}
+    for ip in sorted(addresses):
         if not _is_lan(ip):
             continue
-        hosts.append(_host_row(ip, download.get(ip, 0), upload.get(ip, 0), directory))
+        row = _host_row(ip, download.get(ip, 0), upload.get(ip, 0), directory)
+        existing = by_id.get(row["id"])
+        if existing is not None:
+            existing["download_bytes"] += row["download_bytes"]
+            existing["upload_bytes"] += row["upload_bytes"]
+            known = directory.known(ip) if directory else None
+            if known and known.get("ip"):
+                existing["ip"] = known["ip"]
+        else:
+            known = directory.known(ip) if directory else None
+            if known and known.get("ip"):
+                row["ip"] = known["ip"]
+            by_id[row["id"]] = row
+    hosts = list(by_id.values())
     hosts.sort(key=lambda item: (-(item["download_bytes"] + item["upload_bytes"]), item["name"].lower()))
     assigned = sum(item["download_bytes"] + item["upload_bytes"] for item in hosts)
     other_bytes = None
@@ -1229,19 +1272,27 @@ def reduce_dns(results, directory, end, seconds, now, mode="live", record=None):
                 existing["raw_name"] = raw_name
             continue
         clients_by_ip[ip] = {"ip": ip, "queries": queries, "raw_name": raw_name}
-    clients = []
+    clients_by_key = {}
     for ip, item in clients_by_ip.items():
         known = directory.known(ip) if directory else None
+        ident = known["id"] if known else ("h-" + ip.replace(".", "-") if _is_lan(ip) else None)
+        key = ident or ip
+        existing = clients_by_key.get(key)
+        if existing is not None:
+            existing["queries"] += item["queries"]
+            existing["blocked"] += blocked_by_ip.get(ip, 0)
+            continue
         name = known["name"] if known else (item["raw_name"] or ip)
-        clients.append({
-            "id": known["id"] if known else ("h-" + ip.replace(".", "-") if _is_lan(ip) else None),
+        clients_by_key[key] = {
+            "id": ident,
             "name": name,
-            "ip": ip,
+            "ip": known["ip"] if known and known.get("ip") else ip,
             "icon": known["icon"] if known else "monitor",
             "queries": item["queries"],
             "blocked": blocked_by_ip.get(ip, 0),
             "link": bool(known) or _is_lan(ip),
-        })
+        }
+    clients = list(clients_by_key.values())
     clients.sort(key=lambda item: -item["queries"])
     clients = clients[:DNS_TOP]
     total_queries = 0
@@ -1297,7 +1348,8 @@ def live_host(client, end, seconds, record, now=None):
     now = (now or datetime.now(UTC)).astimezone(UTC)
     end = end.astimezone(UTC)
     start = end - timedelta(seconds=seconds)
-    results = run_all(client, host_queries(start, end, seconds, record["ip"], client_expr(record)))
+    ips = record.get("ips") or [record["ip"]]
+    results = run_all(client, host_queries(start, end, seconds, ips, client_expr(record)))
     return reduce_host(record, results, end, seconds, now)
 
 

@@ -15,6 +15,7 @@ from backend.hosts import (
     normalize_dhcp,
     normalize_mac,
     parse_iot_hosts,
+    parse_known_hosts,
     _unique,
 )
 
@@ -209,6 +210,79 @@ class MergeTests(unittest.TestCase):
         )
         self.assertEqual(ambiguous, ['192.168.5.70'])
         self.assertTrue(all(host['ip'] is None for host in hosts))
+
+    def test_known_hosts_priority_multi_ip_and_mac_enrichment(self):
+        known = parse_known_hosts("""
+version: 1
+hosts:
+  - id: opnsense
+    class: router
+    name: OPNsense
+    ips: [192.168.5.1, 10.10.20.1]
+    notes: Core firewall/router
+  - id: synology
+    class: nas
+    name: Synology-NAS
+    ip: 192.168.5.240
+    mac: 00:11:32:2d:20:95
+    notes: Storage, primary NAS
+  - id: overlap
+    class: server
+    name: ShouldNotOverrideIot
+    ip: 192.0.2.10
+    mac: aa:bb:cc:dd:ee:01
+""")
+        iot = parse_iot_hosts(ALLOW)
+        unifi = [
+            {'mac': '00:11:32:2d:20:95', 'ip': None, 'name': '00:11:32:2d:20:95', 'seen': '2026-11-22T20:00:00Z'},
+        ]
+        pihole = [
+            {'ip': '192.168.5.1', 'name': 'opnsense.internal', 'seen': '2026-11-22T20:00:00Z'},
+        ]
+        hosts, ambiguous = merge_hosts(iot, unifi, pihole, known=known)
+        self.assertEqual(ambiguous, [])
+        by_id = {h['id']: h for h in hosts if h.get('id')}
+        self.assertEqual(by_id['handset']['source'], 'iot-hosts')
+        self.assertNotIn('overlap', by_id)
+        self.assertEqual(by_id['opnsense']['ips'], ['192.168.5.1', '10.10.20.1'])
+        self.assertEqual(by_id['opnsense']['source'], 'known-hosts')
+        self.assertEqual(by_id['synology']['name'], 'Synology-NAS')
+        self.assertEqual(by_id['synology']['seen'], '2026-11-22T20:00:00Z')
+        self.assertEqual(by_id['synology']['ip'], '192.168.5.240')
+
+    def test_known_hosts_validation_and_cache_integration(self):
+        with self.assertRaises(ValueError):
+            parse_known_hosts('version: 2\nhosts: []\n')
+        with self.assertRaises(ValueError):
+            parse_known_hosts('hosts:\n  - id: bad\n    class: server\n    name: NoAddr\n')
+        with self.assertRaises(ValueError):
+            parse_known_hosts(
+                'hosts:\n'
+                '  - id: a\n    class: server\n    name: A\n    ips: [192.0.2.1, 192.0.2.2]\n'
+                '  - id: b\n    class: server\n    name: B\n    ip: 192.0.2.2\n'
+            )
+        with tempfile.TemporaryDirectory() as tmp:
+            known_path = Path(tmp) / 'known-hosts.yaml'
+            known_path.write_text(
+                'version: 1\nhosts:\n'
+                '  - id: opnsense\n    class: router\n    name: OPNsense\n'
+                '    ips: [192.168.5.1, 10.10.20.1]\n'
+            )
+            iot_path = Path(tmp) / 'iot-hosts.yaml'
+            iot_path.write_text('hosts: []\n')
+            with patch.dict(os.environ, {'IOT_HOSTS_FILE': str(iot_path), 'KNOWN_HOSTS_FILE': str(known_path)}):
+                cache = HostCache(clients=[FakeQueries()], clock=lambda: 1_700_000_000, refresh_seconds=300)
+                view = cache.refresh()
+                self.assertEqual(view['sources']['known-hosts']['state'], 'ok')
+                self.assertEqual(view['sources']['known-hosts']['count'], 1)
+                self.assertEqual(cache.lookup(ip='10.10.20.1')['name'], 'OPNsense')
+                self.assertEqual(cache.lookup(ip='192.168.5.1')['id'], 'opnsense')
+            known_path.write_text('hosts: [not-a-dict]\n')
+            with patch.dict(os.environ, {'IOT_HOSTS_FILE': str(iot_path), 'KNOWN_HOSTS_FILE': str(known_path)}):
+                cache = HostCache(clients=[FakeQueries()], clock=lambda: 1_700_000_000, refresh_seconds=300)
+                view = cache.refresh()
+                self.assertEqual(view['sources']['known-hosts']['state'], 'error')
+                self.assertFalse(view['stale'])
 
 
 if __name__ == '__main__':

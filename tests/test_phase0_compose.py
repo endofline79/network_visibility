@@ -30,6 +30,7 @@ class Phase0ComposeTests(unittest.TestCase):
             self.assertIn('PLANNER_TOKEN_FILE: /run/visibility/planner-token', text)
             self.assertIn('PLANNER_MODEL: visibility-planner', text)
             self.assertIn('LLM_BASE_URL: http://172.17.0.1:8081/v1', text)
+            self.assertIn('KNOWN_HOSTS_FILE: /run/visibility/known-hosts.yaml', text)
             self.assertIn('--parallel 1', text)
         self.assertIn('visibility-console:0.5.1', live)
         self.assertIn('PRESENTATION_MODE: live', live)

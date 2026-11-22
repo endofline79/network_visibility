@@ -20,6 +20,7 @@ services:
       PLANNER_MODEL: visibility-planner
       LLM_BASE_URL: http://172.17.0.1:8081/v1
       IOT_HOSTS_FILE: /run/visibility/iot-hosts.yaml
+      KNOWN_HOSTS_FILE: /run/visibility/known-hosts.yaml
       HOST_CACHE_REFRESH_SECONDS: "300"
     ports:
       - "127.0.0.1:8096:8096"

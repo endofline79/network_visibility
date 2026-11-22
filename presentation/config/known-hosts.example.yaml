@@ -1,0 +1,45 @@
+# Example optional inventory for static, wired, and infrastructure hosts.
+#
+# Copy to ~/.local/share/visibility/presentation/known-hosts.yaml on AI-02
+# (mounted read-only at /run/visibility/known-hosts.yaml). Keep personal host
+# lists outside this public Git repository.
+#
+# Merge priority in HostCache (highest first):
+#   1. iot-hosts.yaml  (also the sole allowlist for /api/destinations)
+#   2. known-hosts.yaml (this file; does NOT expand /api/destinations)
+#   3. UniFi snapshot clients & devices
+#   4. OPNsense dnsmasq-dhcp DHCPACK leases
+#   5. Pi-hole client_name
+#
+# Supported classes for console icons/types:
+#   router, dns, controller, switch, ap, server, vm, nas,
+#   workstation, laptop, phone, tablet, printer, host
+#
+# At most 64 hosts; each host requires id, class, name, and at least one of
+# ip, ips (up to 8 addresses), or mac. Edits are picked up within 5 minutes.
+version: 1
+hosts:
+  - id: router
+    class: router
+    name: Firewall-Router
+    ips: [192.0.2.1, 198.51.100.1]
+    dns_names: [router.lab.test]
+    notes: Core firewall and router
+  - id: dns-primary
+    class: dns
+    name: Pi-hole-DNS
+    ip: 192.0.2.53
+    dns_names: [ns0.lab.test]
+    notes: Local DNS resolver and filter
+  - id: nas-primary
+    class: nas
+    name: Lab-NAS
+    ip: 192.0.2.20
+    mac: "00:11:32:00:00:01"
+    notes: Primary network storage
+  - id: lab-host
+    class: server
+    name: Lab-Server
+    ip: 192.0.2.30
+    dns_names: [server.lab.test]
+    notes: Docker and telemetry host
