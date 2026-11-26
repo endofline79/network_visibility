@@ -33,6 +33,7 @@ assert.equal(holdForRange(view, { kind: "overview", id: "other" }), false);
 assert.equal(holdForRange({ kind: "settings", id: "", body: null }, { kind: "settings", id: "" }), false);
 assert.equal(holdForRange(null, { kind: "overview", id: "" }), false);
 
+assert.equal(networkUrl("live", "24h"), "/api/network/live");
 assert.equal(networkUrl("overview", "24h"), "/api/network/overview?range=24h");
 assert.equal(networkUrl("hosts", "1h"), networkUrl("overview", "1h"));
 assert.equal(

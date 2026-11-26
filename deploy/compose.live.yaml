@@ -1,6 +1,6 @@
 # AI-02 live presentation overlay. Deploy with:
 #   docker compose -f deploy/compose.live.yaml up -d
-# The image tag is visibility-console:0.5.2 (pull_policy: never).
+# The image tag is visibility-console:0.6.0 (pull_policy: never).
 # Building and recreating the console on AI-02 is a separate step.
 #
 # Secrets stay on the host under ~/.local/share/visibility/presentation/ and are
@@ -18,7 +18,7 @@
 name: visibility-presentation
 services:
   console:
-    image: visibility-console:0.5.2
+    image: visibility-console:0.6.0
     pull_policy: never
     restart: unless-stopped
     environment:

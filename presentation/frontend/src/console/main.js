@@ -1,5 +1,6 @@
 import "./console.css";
 import { backingSize, debounce, pointerIndex } from "./chartFit.js";
+import { drawNocMap } from "./nocMap.js";
 import {
   LOADING_DELAY_MS,
   PREFETCH_LIMIT,
@@ -51,6 +52,10 @@ const P = {
   back: '<path d="m15 6-6 6 6 6"/>',
   layers: '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>',
   refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  dots: '<circle cx="12" cy="5" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none"/>',
+  rail: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
+  noc: '<circle cx="12" cy="12" r="2.2"/><circle cx="12" cy="4" r="1.5"/><circle cx="12" cy="20" r="1.5"/><circle cx="4" cy="12" r="1.5"/><circle cx="20" cy="12" r="1.5"/><circle cx="6.5" cy="6.5" r="1.2"/><circle cx="17.5" cy="6.5" r="1.2"/><circle cx="6.5" cy="17.5" r="1.2"/><circle cx="17.5" cy="17.5" r="1.2"/><path d="M12 5.5v4.3M12 14.2v4.3M5.5 12h4.3M14.2 12h4.3M7.5 7.5l2.8 2.8M16.5 7.5l-2.8 2.8M7.5 16.5l2.8-2.8M16.5 16.5l-2.8-2.8"/>',
 };
 const CATC = {
   Streaming: "#2dd4bf",
@@ -234,6 +239,11 @@ const saved = lsGet("nd-range");
 const state = {
   range: RANGES.includes(saved) ? saved : "24h",
   showAll: false,
+  railCollapsed: lsGet("nd-rail-collapsed") === "1",
+  mapFlows: true,
+  mapBlocks: true,
+  search: "",
+  menuOpen: false,
   login: false,
   loginError: "",
   error: "",
@@ -250,9 +260,13 @@ let navReady = false;
 let painted = "";
 let refreshFlight = null;
 let chartReg = [];
+let mapReg = null;
 let chartObserver = null;
 let dprMedia = null;
-const scheduleChartDraw = debounce(() => drawCharts(), 80);
+const scheduleChartDraw = debounce(() => {
+  drawCharts();
+  drawLiveMap();
+}, 80);
 
 function routeOf() {
   const parts = (location.hash.replace(/^#\/?/, "") || "overview").split("/");
@@ -274,22 +288,23 @@ function routeOf() {
     return { kind: "alerts", id: "", url: networkUrl("alerts", state.range) };
   if (page === "settings") return { kind: "settings", id: "", url: "" };
   return {
-    kind: "overview",
+    kind: "live",
     id: "",
-    url: networkUrl("overview", state.range),
+    url: networkUrl("live", state.range),
   };
 }
 function titleFor(route) {
   return (
     {
-      overview: "Home Network",
+      live: "Network Operations Center",
+      overview: "Network Operations Center",
       hosts: "Hosts",
       host: "Host",
       firewall: "Firewall",
       dns: "DNS",
       alerts: "Alerts",
       settings: "Settings",
-    }[route.kind] || "Home Network"
+    }[route.kind] || "Network Operations Center"
   );
 }
 function shared(a, b) {
@@ -329,6 +344,7 @@ const prefetch = createPrefetch({
 });
 
 function navKey(route) {
+  if (route.kind === "live") return "overview";
   return route.kind === "host" ? "hosts" : route.kind;
 }
 function warmAlerts(seq) {
@@ -623,6 +639,15 @@ function drawCharts() {
     drawChart(document.getElementById(id), options),
   );
 }
+function drawLiveMap() {
+  if (!mapReg) return;
+  const el = document.getElementById("noc-map");
+  if (!el) return;
+  drawNocMap(el, mapReg, {
+    showFlows: state.mapFlows,
+    showBlocks: state.mapBlocks,
+  });
+}
 function bindChartResize() {
   if (chartObserver) {
     chartObserver.disconnect();
@@ -631,11 +656,14 @@ function bindChartResize() {
   const nodes = chartReg
     .map(([id]) => document.getElementById(id))
     .filter(Boolean);
+  const mapEl = mapReg ? document.getElementById("noc-map") : null;
+  if (mapEl) nodes.push(mapEl);
   if (typeof ResizeObserver === "function" && nodes.length) {
     chartObserver = new ResizeObserver(() => scheduleChartDraw());
     nodes.forEach((node) => chartObserver.observe(node));
   }
   drawCharts();
+  drawLiveMap();
 }
 function onDprChange() {
   watchResolution();
@@ -681,14 +709,14 @@ function sidebar(active) {
       ? `<span class="dot"></span>`
       : "";
   const items = [
-    ["overview", "home", "Overview"],
+    ["overview", "noc", "Live Monitor"],
     ["hosts", "hosts", "Hosts"],
     ["firewall", "shield", "Firewall"],
     ["dns", "globe", "DNS"],
     ["alerts", "bell", "Alerts"],
   ];
   return (
-    `<div class="logo">nd</div>` +
+    `<button type="button" class="rail-btn" data-act="toggleRail" aria-label="Collapse sidebar" title="Collapse sidebar">${ic("rail", 'width="18" height="18"')}<span class="tt">Collapse</span></button>` +
     items
       .map(
         ([key, icon, label]) =>
@@ -697,6 +725,16 @@ function sidebar(active) {
       .join("") +
     `<div class="sp"></div><a href="#/settings" class="${active === "settings" ? "on" : ""}" aria-label="Settings">${ic("gear")}<span class="tt">Settings</span></a>`
   );
+}
+function railExpandBtn() {
+  return `<button type="button" class="rail-expand" data-act="toggleRail" aria-label="Show navigation" title="Show navigation">${ic("rail", 'width="16" height="16"')}</button>`;
+}
+function clockNow() {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date());
 }
 function pill() {
   return `<div class="pill" role="group" aria-label="Time range">${RANGES.map((key) => `<button type="button" data-range="${key}" class="${key === state.range ? "on" : ""}" aria-pressed="${key === state.range}">${key}</button>`).join("")}</div>`;
@@ -717,7 +755,7 @@ function topbar({ title, health, crumb, icon, sub, data }) {
   const badge =
     data && data.illustrative ? `<span class="badge">Example data</span>` : "";
   const refreshBtn = `<button type="button" class="refbtn" data-act="refresh" aria-label="Refresh" title="Refresh">${ic("refresh", 'width="15" height="15"')}</button>`;
-  return `<div class="top"><div>${crumb ? `<div class="crumb">${crumb}</div>` : ""}<div class="ttl">${icon ? `<div class="hicon">${ic(icon)}</div>` : ""}<div><h1 title="${esc(title)}">${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ""}${health || ""}</div></div></div><div class="right">${badge}${pill()}${refreshBtn}</div></div>`;
+  return `<div class="top"><div>${crumb ? `<div class="crumb">${crumb}</div>` : ""}<div class="ttl">${railExpandBtn()}${icon ? `<div class="hicon">${ic(icon)}</div>` : ""}<div><h1 title="${esc(title)}">${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ""}${health || ""}</div></div></div><div class="right">${badge}${pill()}${refreshBtn}</div></div>`;
 }
 function kpi(icon, cls, label, val, sub, tip) {
   const title = tip ? ` title="${esc(tip)}"` : "";
@@ -765,6 +803,213 @@ function windowLabel(data) {
   return (data.window && data.window.label) || "";
 }
 
+function renderHostSpark(values, tone, idx) {
+  const pts = values && values.length ? values : [0, 0];
+  const W = 78;
+  const H = 24;
+  const pad = 2;
+  const max = Math.max(1, ...pts);
+  const step = pts.length > 1 ? (W - pad * 2) / (pts.length - 1) : W - pad * 2;
+  const coords = pts.map((v, i) => [
+    pad + i * step,
+    H - pad - (Math.max(0, v) / max) * (H - pad * 2 - 2),
+  ]);
+  const stroke =
+    tone === "amber" ? "#fb923c" : tone === "blue" ? "#60a5fa" : "#34d399";
+  const line = coords
+    .map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`)
+    .join("");
+  const area = `${line} L${coords[coords.length - 1][0].toFixed(1)},${H} L${coords[0][0].toFixed(1)},${H} Z`;
+  const gid = `hsp${idx}`;
+  return (
+    `<svg class="noc-spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">` +
+    `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${stroke}" stop-opacity="0.32"/><stop offset="100%" stop-color="${stroke}" stop-opacity="0"/></linearGradient></defs>` +
+    `<path d="${area}" fill="url(#${gid})"/>` +
+    `<path d="${line}" fill="none" stroke="${stroke}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>` +
+    `</svg>`
+  );
+}
+function renderLiveWave(points) {
+  const pts =
+    points && points.length > 1
+      ? points
+      : [
+          { bytes: 0, blocks: 0 },
+          { bytes: 0, blocks: 0 },
+        ];
+  const W = 196;
+  const H = 40;
+  const pad = 4;
+  const bytesArr = pts.map((p) => Number(p.bytes) || 0);
+  const maxB = Math.max(1, ...bytesArr);
+  const step = (W - pad * 2) / (pts.length - 1);
+  const coords = bytesArr.map((v, i) => [
+    pad + i * step,
+    H - pad - (v / maxB) * (H - pad * 2 - 4),
+  ]);
+  // Soft secondary smoothed curve (moving average) to echo the dual-wave aesthetic honestly.
+  const smoothAvg = bytesArr.map((_, i) => {
+    const lo = Math.max(0, i - 1);
+    const hi = Math.min(bytesArr.length - 1, i + 1);
+    let sum = 0;
+    for (let k = lo; k <= hi; k++) sum += bytesArr[k];
+    return sum / (hi - lo + 1);
+  });
+  const coords2 = smoothAvg.map((v, i) => [
+    pad + i * step,
+    H - pad - (v / maxB) * (H - pad * 2 - 4),
+  ]);
+  const line1 = smooth(coords);
+  const area1 = `${line1} L${coords[coords.length - 1][0].toFixed(1)},${H} L${coords[0][0].toFixed(1)},${H} Z`;
+  const line2 = smooth(coords2);
+  return (
+    `<svg class="noc-wave" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">` +
+    `<defs>` +
+    `<linearGradient id="nocWaveFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#38bdf8" stop-opacity="0.38"/><stop offset="100%" stop-color="#2dd4bf" stop-opacity="0"/></linearGradient>` +
+    `<filter id="nocWaveGlow" x="-15%" y="-30%" width="130%" height="160%"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>` +
+    `</defs>` +
+    `<path d="${area1}" fill="url(#nocWaveFill)"/>` +
+    `<path d="${line2}" fill="none" stroke="#60a5fa" stroke-width="1.4" opacity="0.45"/>` +
+    `<path d="${line1}" fill="none" stroke="#38bdf8" stroke-width="2" filter="url(#nocWaveGlow)" stroke-linecap="round"/>` +
+    `</svg>`
+  );
+}
+function nocHostRowsHtml(hosts, query) {
+  const needle = (query || "").trim().toLowerCase();
+  const filtered = needle
+    ? hosts.filter((h) =>
+        `${h.name} ${h.ip} ${h.type || ""} ${h.location || ""}`
+          .toLowerCase()
+          .includes(needle),
+      )
+    : hosts;
+  if (!filtered.length) {
+    return `<div class="noc-empty">${needle ? "No hosts match that filter." : "No recent host activity in the last 15 minutes."}</div>`;
+  }
+  return filtered
+    .map((h, idx) => {
+      const tone =
+        h.blocked > 0 ? "amber" : h.status === "active" ? "green" : "blue";
+      const pillCls = h.status === "active" ? "active" : "idle";
+      const pillLabel = h.status === "active" ? "ACTIVE" : "IDLE";
+      const tipBits = [
+        `<div class="tl">${esc(h.name)}${h.type ? ` · ${esc(h.type)}` : ""}</div>`,
+        `<i style="background:#2dd4bf"></i>Down <b>${fBytes(h.download_bytes || 0)}</b> · Up <b>${fBytes(h.upload_bytes || 0)}</b>`,
+      ];
+      if (h.blocked > 0) {
+        tipBits.push(
+          `<br><i style="background:#fb923c"></i><b>${fInt(h.blocked)}</b> firewall drops (15m)`,
+        );
+      }
+      return (
+        `<a class="noc-hrow" href="#/host/${encodeURIComponent(h.id)}" data-host-id="${esc(h.id)}" ${tipAttr(tipBits.join(""))}>` +
+        `<div class="noc-hname"><span class="noc-hic">${ic(h.icon)}</span>${clip(h.name)}</div>` +
+        `<div class="noc-hip num">${esc(h.ip)}</div>` +
+        `<div class="noc-hst"><span class="noc-pill ${pillCls}">${pillLabel}</span></div>` +
+        `<div class="noc-htraf">${renderHostSpark(h.spark, tone, idx)}<span class="noc-hval num">${fBytes(h.bytes)}</span></div>` +
+        `</a>`
+      );
+    })
+    .join("");
+}
+function livePage(data) {
+  mapReg = data.map || null;
+  const openCount =
+    state.alerts && state.alerts.open ? state.alerts.open.length : 0;
+  const hState = (data.health && data.health.state) || "healthy";
+  const liveLabel =
+    hState === "healthy"
+      ? "REAL-TIME"
+      : hState === "degraded"
+        ? "LAGGING"
+        : "OFFLINE";
+  const healthTip =
+    hState === "healthy"
+      ? "All telemetry sources fresh · open Ops Home"
+      : hState === "degraded"
+        ? "One or more sources lagging · open Ops Home"
+        : "Telemetry unavailable · open Ops Home";
+  const totals = data.totals || {};
+  const flowCount = totals.flow_endpoints;
+  const blockCount = totals.block_endpoints;
+  const blockEvents = totals.firewall_blocks;
+  const bytesTotal = totals.bytes;
+  const avgMbps = totals.avg_mbps;
+  const throughputSummary =
+    bytesTotal == null
+      ? "15m window"
+      : `${fBytes(bytesTotal)} · 15m${avgMbps != null ? ` · ${fMbps(avgMbps)} avg` : ""}`;
+  const demoBadge = data.illustrative
+    ? `<span class="badge">Example data</span>`
+    : "";
+  const alertBadge = openCount
+    ? `<span class="noc-bell-count">${openCount > 99 ? "99+" : openCount}</span>`
+    : "";
+  const hosts = data.hosts || [];
+  const menuHtml = state.menuOpen
+    ? `<div class="noc-menu" role="menu">` +
+      `<a href="#/hosts" role="menuitem">All hosts (1h / 24h / 7d)</a>` +
+      `<a href="#/firewall" role="menuitem">Firewall &amp; spikes</a>` +
+      `<a href="#/dns" role="menuitem">DNS queries &amp; clients</a>` +
+      `<a href="/legacy" role="menuitem">Ops Home &amp; freshness</a>` +
+      `</div>`
+    : "";
+  return (
+    `<div class="noc-wrap">` +
+    `<header class="noc-bar">` +
+    `<div class="noc-bar-left">` +
+    railExpandBtn() +
+    `<span class="noc-emblem">${ic("noc", 'width="22" height="22"')}</span>` +
+    `<span class="noc-brand">NETWORK OPERATIONS CENTER</span>` +
+    `<span class="noc-sep"></span>` +
+    `<span class="noc-clock num" id="noc-clock">${esc(clockNow())}</span>` +
+    demoBadge +
+    `</div>` +
+    `<div class="noc-bar-right">` +
+    `<label class="noc-search">${ic("search", 'width="14" height="14"')}<input type="search" id="noc-search" placeholder="Search hosts or IP…" value="${esc(state.search)}" autocomplete="off" spellcheck="false"/></label>` +
+    `<button type="button" class="noc-icon-btn" data-act="refresh" aria-label="Refresh live monitor" title="Refresh">${ic("refresh", 'width="16" height="16"')}</button>` +
+    `<a href="#/alerts" class="noc-icon-btn" id="noc-bell" aria-label="Alerts" title="Alerts">${ic("bell", 'width="17" height="17"')}${alertBadge}</a>` +
+    `<a href="#/settings" class="noc-icon-btn" aria-label="Settings" title="Settings">${ic("gear", 'width="17" height="17"')}</a>` +
+    `<a href="/legacy" class="noc-health-ind ${esc(hState)}" title="${esc(healthTip)}" aria-label="${esc(healthTip)}"><i></i><i></i><i></i></a>` +
+    `</div>` +
+    `</header>` +
+    `<div class="noc-grid">` +
+    `<section class="noc-panel noc-map-panel">` +
+    `<div class="noc-phead">` +
+    `<h2>GLOBAL TRAFFIC MONITOR</h2>` +
+    `<span class="noc-live-pill ${esc(hState)}" title="Rolling 15m traffic · 5m active flows · refreshes every 15s">${liveLabel}<i></i></span>` +
+    `</div>` +
+    `<div class="noc-map-well">` +
+    `<div class="noc-map-sub">` +
+    `<span>ACTIVE FLOWS &amp; FIREWALL BLOCKS</span>` +
+    `<span class="noc-map-counts num">${flowCount == null ? "—" : fInt(flowCount)} active · ${blockEvents == null ? "—" : fInt(blockEvents)} drops</span>` +
+    `</div>` +
+    `<div class="noc-map-box" id="noc-map"></div>` +
+    `<div class="noc-legend">` +
+    `<button type="button" class="noc-leg-btn ${state.mapFlows ? "on" : ""}" data-map-layer="flows" aria-pressed="${state.mapFlows}"><i class="cyan"></i>ACTIVE FLOWS${flowCount != null ? ` <span>(${fInt(flowCount)})</span>` : ""}</button>` +
+    `<button type="button" class="noc-leg-btn ${state.mapBlocks ? "on" : ""}" data-map-layer="blocks" aria-pressed="${state.mapBlocks}"><i class="amber"></i>FIREWALL BLOCKS${blockCount != null ? ` <span>(${fInt(blockCount)})</span>` : ""}</button>` +
+    `</div>` +
+    `</div>` +
+    `<div class="noc-footer">` +
+    `<div class="noc-foot-meta"><span class="noc-foot-label">LIVE THROUGHPUT</span><span class="noc-foot-sub num">${esc(throughputSummary)}</span></div>` +
+    `<a href="#/hosts" class="noc-wave-link" title="View historical throughput &amp; hosts">${renderLiveWave(data.throughput && data.throughput.points)}</a>` +
+    `</div>` +
+    `</section>` +
+    `<section class="noc-panel noc-hosts-panel">` +
+    `<div class="noc-phead">` +
+    `<h2>HOSTS &amp; NODES</h2>` +
+    `<div class="noc-head-right">` +
+    `<span class="noc-host-count num">${totals.active_hosts ?? 0} active</span>` +
+    `<div class="noc-menu-wrap"><button type="button" class="noc-icon-btn sm" data-act="toggleMenu" aria-label="More views" aria-expanded="${state.menuOpen}">${ic("dots", 'width="16" height="16"')}</button>${menuHtml}</div>` +
+    `</div>` +
+    `</div>` +
+    `<div class="noc-thead"><span>HOST NAME</span><span>IP ADDRESS</span><span>STATUS</span><span class="r">TRAFFIC</span></div>` +
+    `<div class="noc-hlist" id="noc-hlist">${nocHostRowsHtml(hosts, state.search)}</div>` +
+    `</section>` +
+    `</div>` +
+    `</div>`
+  );
+}
 function overviewPage(data) {
   const hosts = data.hosts || [];
   const shown = state.showAll ? hosts : hosts.slice(0, 10);
@@ -1101,6 +1346,7 @@ function loginHtml() {
   return `<div class="login-wrap"><form class="card login" id="login"><div class="logo">nd</div><h1>Home Network</h1><p>Sign in to view your network.</p><label>Username<input name="username" autocomplete="username" required maxlength="80"></label><label>Password<input name="password" type="password" autocomplete="current-password" required maxlength="512"></label>${state.loginError ? `<p class="err" role="alert">${esc(state.loginError)}</p>` : ""}<button type="submit">Sign in</button></form></div>`;
 }
 function pageHtml(route, body) {
+  if (route.kind === "live") return livePage(body);
   if (route.kind === "overview") return overviewPage(body);
   if (route.kind === "hosts") return hostsPage(body);
   if (route.kind === "host") return hostPage(body);
@@ -1142,15 +1388,28 @@ function syncNav(active) {
   });
   const alerts = nav.querySelector('a[href="#/alerts"]');
   if (!alerts) return;
-  const open = !!(
-    state.alerts &&
-    state.alerts.open &&
-    state.alerts.open.length
-  );
+  const openCount =
+    state.alerts && state.alerts.open ? state.alerts.open.length : 0;
+  const open = openCount > 0;
   const dot = alerts.querySelector(":scope > .dot");
   if (open && !dot)
     alerts.insertAdjacentHTML("beforeend", `<span class="dot"></span>`);
   else if (!open && dot) dot.remove();
+  const topBell = document.getElementById("noc-bell");
+  if (topBell) {
+    const badge = topBell.querySelector(".noc-bell-count");
+    if (open) {
+      const label = openCount > 99 ? "99+" : String(openCount);
+      if (badge) badge.textContent = label;
+      else
+        topBell.insertAdjacentHTML(
+          "beforeend",
+          `<span class="noc-bell-count">${label}</span>`,
+        );
+    } else if (badge) {
+      badge.remove();
+    }
+  }
 }
 function markRange() {
   document.querySelectorAll("main [data-range]").forEach((btn) => {
@@ -1192,7 +1451,9 @@ function render(opts = {}) {
     return;
   }
   const { main } = ensureShell();
+  app.classList.toggle("rail-collapsed", !!state.railCollapsed);
   const route = routeOf();
+  main.classList.toggle("noc-main", route.kind === "live");
   syncNav(navKey(route));
   if (opts.stale) {
     markRange();
@@ -1201,16 +1462,24 @@ function render(opts = {}) {
     return;
   }
   const prevCharts = chartReg;
+  const prevMap = mapReg;
   chartReg = [];
+  mapReg = null;
   const html = contentFor(route);
   const busy = state.dimmed || state.loading;
   if (html === painted) {
     chartReg = prevCharts;
+    mapReg = prevMap;
     main.classList.toggle("pending", !!state.dimmed);
     if (busy) main.setAttribute("aria-busy", "true");
     else main.removeAttribute("aria-busy");
     return;
   }
+  const activeEl = document.activeElement;
+  const keepSearch =
+    activeEl && activeEl.id === "noc-search"
+      ? { start: activeEl.selectionStart, end: activeEl.selectionEnd }
+      : null;
   const y = opts.preserveScroll ? window.scrollY : null;
   disconnectCharts();
   painted = html;
@@ -1218,6 +1487,17 @@ function render(opts = {}) {
   main.classList.toggle("pending", !!state.dimmed);
   if (busy) main.setAttribute("aria-busy", "true");
   else main.removeAttribute("aria-busy");
+  if (keepSearch) {
+    const input = document.getElementById("noc-search");
+    if (input) {
+      input.focus({ preventScroll: true });
+      try {
+        input.setSelectionRange(keepSearch.start, keepSearch.end);
+      } catch (e) {
+        /* ignore unsupported selection types */
+      }
+    }
+  }
   if (y != null) window.scrollTo(0, y);
   bindChartResize();
 }
@@ -1289,6 +1569,43 @@ function refreshCurrent() {
 }
 
 document.addEventListener("click", (e) => {
+  const railToggle = e.target.closest("[data-act='toggleRail']");
+  if (railToggle) {
+    state.railCollapsed = !state.railCollapsed;
+    lsSet("nd-rail-collapsed", state.railCollapsed ? "1" : "0");
+    const app = document.getElementById("app");
+    if (app) app.classList.toggle("rail-collapsed", state.railCollapsed);
+    scheduleChartDraw();
+    return;
+  }
+  const mapLayer = e.target.closest("[data-map-layer]");
+  if (mapLayer) {
+    const layer = mapLayer.dataset.mapLayer;
+    if (layer === "flows") state.mapFlows = !state.mapFlows;
+    if (layer === "blocks") state.mapBlocks = !state.mapBlocks;
+    if (!state.mapFlows && !state.mapBlocks) {
+      state.mapFlows = true;
+      state.mapBlocks = true;
+    }
+    document.querySelectorAll("[data-map-layer]").forEach((btn) => {
+      const on =
+        btn.dataset.mapLayer === "flows" ? state.mapFlows : state.mapBlocks;
+      btn.classList.toggle("on", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    drawLiveMap();
+    return;
+  }
+  const menuBtn = e.target.closest("[data-act='toggleMenu']");
+  if (menuBtn) {
+    state.menuOpen = !state.menuOpen;
+    render({ preserveScroll: true });
+    return;
+  }
+  if (state.menuOpen && !e.target.closest(".noc-menu-wrap")) {
+    state.menuOpen = false;
+    render({ preserveScroll: true });
+  }
   const range = e.target.closest("[data-range]");
   if (range) {
     if (range.dataset.range === state.range) return;
@@ -1365,7 +1682,29 @@ document.addEventListener("submit", async (e) => {
     render();
   }
 });
+document.addEventListener("input", (e) => {
+  if (e.target && e.target.id === "noc-search") {
+    state.search = e.target.value || "";
+    const list = document.getElementById("noc-hlist");
+    if (list && state.view && state.view.kind === "live" && state.view.body) {
+      list.innerHTML = nocHostRowsHtml(
+        state.view.body.hosts || [],
+        state.search,
+      );
+    }
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.target && e.target.id === "noc-search" && e.key === "Enter") {
+    const first = document.querySelector("#noc-hlist a.noc-hrow");
+    if (first) {
+      e.preventDefault();
+      location.hash = first.getAttribute("href");
+    }
+  }
+});
 addEventListener("hashchange", () => {
+  state.menuOpen = false;
   scrollTo(0, 0);
   show("nav");
 });
@@ -1373,6 +1712,11 @@ if (typeof ResizeObserver !== "function")
   addEventListener("resize", () => scheduleChartDraw());
 watchResolution();
 setInterval(refreshCurrent, 60000);
+setInterval(() => {
+  const clk = document.getElementById("noc-clock");
+  if (clk) clk.textContent = clockNow();
+  if (routeOf().kind === "live") refreshCurrent();
+}, 15000);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && !state.login && Date.now() - lastFetched >= 15000) {
     refreshCurrent();

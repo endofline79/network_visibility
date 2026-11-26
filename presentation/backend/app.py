@@ -87,7 +87,7 @@ def logout(request:Request):
     if not viewer:raise HTTPException(404,'Viewer sign-in is not configured in this demo')
     same_origin(request);request.session.clear()
     return {'authenticated':False}
-VERSION='0.5.2'
+VERSION='0.6.0'
 def _anchor(end):
     anchor=end or datetime.now(timezone.utc).replace(second=0,microsecond=0)
     if anchor.tzinfo is None:raise HTTPException(422,'A timezone is required')
@@ -96,6 +96,19 @@ def _anchor(end):
     if (datetime.now(timezone.utc)-anchor).total_seconds()>30*86400:raise HTTPException(422,'Window exceeds retention')
     return anchor
 _RANGE_SECONDS={'1h':3600,'24h':86400,'7d':604800}
+@app.get('/api/network/live')
+def network_live(end:datetime|None=None):
+    anchor=_anchor(end)
+    if MODE=='demo':
+        from .noc_live import demo_live
+        return demo_live(anchor)
+    from .network import Directory
+    from .noc_live import live_noc
+    from .service import service
+    try:return _network_cached(('live',anchor.isoformat()),lambda:live_noc(service.client,anchor,Directory.from_sources(host_cache),geo=service.geo))
+    except Exception as exc:
+        log.warning('network live failed: %s',type(exc).__name__)
+        raise HTTPException(503,'Real-time monitor cannot be validated right now') from None
 @app.get('/api/network/overview')
 def network_overview(range:Literal['1h','24h','7d']='24h',end:datetime|None=None):
     anchor=_anchor(end);seconds=_RANGE_SECONDS[range]

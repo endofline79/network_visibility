@@ -14,6 +14,7 @@ export function sameData(a, b) {
 
 export function networkUrl(kind, range, id = "") {
   const q = `range=${encodeURIComponent(range)}`;
+  if (kind === "live") return "/api/network/live";
   if (kind === "overview" || kind === "hosts")
     return `/api/network/overview?${q}`;
   if (kind === "host")
