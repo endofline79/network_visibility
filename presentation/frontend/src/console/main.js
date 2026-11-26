@@ -1,5 +1,17 @@
 import "./console.css";
 import { backingSize, debounce, pointerIndex } from "./chartFit.js";
+import {
+  LOADING_DELAY_MS,
+  PREFETCH_LIMIT,
+  createCache,
+  createPrefetch,
+  holdForRange,
+  networkUrl,
+  otherViewUrls,
+  paintMode,
+  sameData,
+  whenIdle,
+} from "./swr.js";
 
 const P = {
   home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>',
@@ -228,10 +240,15 @@ const state = {
   mode: "",
   view: null,
   alerts: null,
+  dimmed: false,
+  loading: false,
 };
-const cache = new Map();
 let token = 0;
 let lastFetched = 0;
+let loadingTimer = 0;
+let navReady = false;
+let painted = "";
+let refreshFlight = null;
 let chartReg = [];
 let chartObserver = null;
 let dprMedia = null;
@@ -241,28 +258,26 @@ function routeOf() {
   const parts = (location.hash.replace(/^#\/?/, "") || "overview").split("/");
   const page = parts[0] || "overview";
   const id = decodeURIComponent(parts[1] || "");
-  const q = `range=${encodeURIComponent(state.range)}`;
   if (page === "hosts")
-    return { kind: "hosts", id: "", url: `/api/network/overview?${q}` };
+    return { kind: "hosts", id: "", url: networkUrl("hosts", state.range) };
   if (page === "host")
-    return {
-      kind: "host",
-      id,
-      url: `/api/network/host/${encodeURIComponent(id)}?${q}`,
-    };
+    return { kind: "host", id, url: networkUrl("host", state.range, id) };
   if (page === "firewall")
-    return { kind: "firewall", id: "", url: `/api/network/firewall?${q}` };
-  if (page === "dns")
     return {
-      kind: "dns",
-      id,
-      url: id
-        ? `/api/network/dns?${q}&host=${encodeURIComponent(id)}`
-        : `/api/network/dns?${q}`,
+      kind: "firewall",
+      id: "",
+      url: networkUrl("firewall", state.range),
     };
-  if (page === "alerts") return { kind: "alerts", id: "", url: "/api/alerts" };
+  if (page === "dns")
+    return { kind: "dns", id, url: networkUrl("dns", state.range, id) };
+  if (page === "alerts")
+    return { kind: "alerts", id: "", url: networkUrl("alerts", state.range) };
   if (page === "settings") return { kind: "settings", id: "", url: "" };
-  return { kind: "overview", id: "", url: `/api/network/overview?${q}` };
+  return {
+    kind: "overview",
+    id: "",
+    url: networkUrl("overview", state.range),
+  };
 }
 function titleFor(route) {
   return (
@@ -297,64 +312,164 @@ async function fetchJson(url) {
   if (!response.ok) throw new Error("This view is unavailable right now.");
   return response.json();
 }
-async function cached(url) {
-  if (!cache.has(url)) {
-    cache.set(
-      url,
-      fetchJson(url).catch((err) => {
-        cache.delete(url);
-        throw err;
-      }),
-    );
-  }
-  return cache.get(url);
+const cache = createCache(fetchJson);
+const prefetch = createPrefetch({
+  has: (url) => cache.peek(url) !== undefined,
+  load: (url) =>
+    cache.load(url).catch((err) => {
+      if (state.login) {
+        state.dimmed = false;
+        state.loading = false;
+        render();
+      }
+      throw err;
+    }),
+  idle: whenIdle,
+  limit: PREFETCH_LIMIT,
+});
+
+function navKey(route) {
+  return route.kind === "host" ? "hosts" : route.kind;
 }
-async function refreshAlerts() {
-  try {
-    state.alerts = await cached("/api/alerts");
-  } catch (err) {
-    if (state.login) throw err;
-  }
+function warmAlerts(seq) {
+  if (state.alerts) return;
+  cache.load("/api/alerts").then(
+    (data) => {
+      if (seq !== token || state.login) return;
+      if (data && data.mode) state.mode = data.mode;
+      if (sameData(state.alerts, data)) return;
+      state.alerts = data;
+      syncNav(navKey(routeOf()));
+    },
+    () => {
+      if (seq === token && state.login) render();
+    },
+  );
 }
-async function show(force = false) {
+function landed(route) {
+  const body = state.view && state.view.body;
+  const host =
+    route.kind === "hosts" && body && body.hosts && body.hosts.length
+      ? body.hosts[0].id
+      : "";
+  prefetch.schedule(otherViewUrls(state.range, route.kind, host));
+}
+function show(reason = "nav") {
   const seq = ++token;
+  clearTimeout(loadingTimer);
+  loadingTimer = 0;
   const route = routeOf();
   state.error = "";
-  const matches =
-    state.view &&
-    state.view.range === state.range &&
-    state.view.id === route.id &&
-    (state.view.kind === route.kind || shared(state.view.kind, route.kind));
-  if (!force && matches) {
-    state.view = { ...state.view, kind: route.kind };
+  state.loading = false;
+  const preserveScroll = reason !== "nav";
+  if (state.login) {
     render();
     return;
   }
-  if (!force) render();
-  try {
-    if (route.kind === "settings") {
-      await refreshAlerts();
-      if (seq !== token) return;
-      state.view = { kind: "settings", range: state.range, id: "", body: null };
-    } else {
-      const body = await cached(route.url);
-      if (seq !== token) return;
-      if (body && body.mode) state.mode = body.mode;
-      if (route.kind !== "alerts") await refreshAlerts();
-      if (seq !== token) return;
-      state.view = { kind: route.kind, range: state.range, id: route.id, body };
-    }
-    if (state.alerts && state.alerts.mode) state.mode = state.alerts.mode;
-    lastFetched = Date.now();
-    state.login = false;
-  } catch (err) {
-    if (seq !== token) return;
-    if (!state.login && !force) {
-      state.error = err.message || "This view is unavailable right now.";
-      state.view = null;
-    }
+  if (route.kind === "settings") {
+    state.dimmed = false;
+    state.view = { kind: "settings", range: state.range, id: "", body: null };
+    render({ preserveScroll });
+    warmAlerts(seq);
+    landed(route);
+    return;
   }
-  render();
+  const samePage =
+    state.view &&
+    !state.dimmed &&
+    state.view.range === state.range &&
+    state.view.id === route.id &&
+    (state.view.kind === route.kind || shared(state.view.kind, route.kind));
+  if (samePage) {
+    state.view = { ...state.view, kind: route.kind };
+    render({ preserveScroll });
+    landed(route);
+    return;
+  }
+  const cached = cache.peek(route.url);
+  const mode = paintMode(
+    cached !== undefined,
+    reason === "range" && holdForRange(state.view, route),
+  );
+  if (mode === "immediate") {
+    state.dimmed = false;
+    if (cached && cached.mode) state.mode = cached.mode;
+    state.view = {
+      kind: route.kind,
+      range: state.range,
+      id: route.id,
+      body: cached,
+    };
+    if (route.kind === "alerts") state.alerts = cached;
+    render({ preserveScroll });
+    warmAlerts(seq);
+    landed(route);
+    return;
+  }
+  if (reason === "range") markRange();
+  if (mode === "dim") {
+    state.dimmed = true;
+    render({ stale: true });
+  } else {
+    state.dimmed = false;
+    loadingTimer = setTimeout(() => {
+      if (seq !== token) return;
+      state.loading = true;
+      render();
+    }, LOADING_DELAY_MS);
+  }
+  const alertsPromise =
+    state.alerts || route.kind === "alerts" ? null : cache.load("/api/alerts");
+  cache.load(route.url).then(
+    (body) => {
+      if (seq !== token) return;
+      clearTimeout(loadingTimer);
+      loadingTimer = 0;
+      state.loading = false;
+      state.dimmed = false;
+      if (state.login) {
+        render();
+        return;
+      }
+      if (body && body.mode) state.mode = body.mode;
+      lastFetched = Date.now();
+      state.view = {
+        kind: route.kind,
+        range: state.range,
+        id: route.id,
+        body,
+      };
+      if (route.kind === "alerts") state.alerts = body;
+      render({ preserveScroll });
+      if (alertsPromise) {
+        alertsPromise.then(
+          (data) => {
+            if (seq !== token || state.login) return;
+            if (data && data.mode) state.mode = data.mode;
+            if (sameData(state.alerts, data)) return;
+            state.alerts = data;
+            syncNav(navKey(routeOf()));
+          },
+          () => {
+            if (seq === token && state.login) render();
+          },
+        );
+      } else warmAlerts(seq);
+      landed(route);
+    },
+    (err) => {
+      if (seq !== token) return;
+      clearTimeout(loadingTimer);
+      loadingTimer = 0;
+      state.loading = false;
+      state.dimmed = false;
+      if (!state.login) {
+        state.error = err.message || "This view is unavailable right now.";
+        state.view = null;
+      }
+      render();
+    },
+  );
 }
 
 function niceMax(v) {
@@ -994,46 +1109,192 @@ function pageHtml(route, body) {
   if (route.kind === "alerts") return alertsPage(body);
   return settingsPage();
 }
-function render() {
+function disconnectCharts() {
   if (chartObserver) {
     chartObserver.disconnect();
     chartObserver = null;
   }
-  chartReg = [];
-  hideTip();
+}
+function ensureShell() {
   const app = document.getElementById("app");
-  if (state.login) {
-    app.innerHTML = loginHtml();
+  let nav = app.querySelector(":scope > nav.sb");
+  let main = app.querySelector(":scope > main");
+  if (!nav || !main) {
+    navReady = false;
+    painted = "";
+    app.innerHTML = `<nav class="sb"></nav><main></main>`;
+    nav = app.querySelector(":scope > nav.sb");
+    main = app.querySelector(":scope > main");
+  }
+  return { app, nav, main };
+}
+function syncNav(active) {
+  const nav = document.querySelector("#app > nav.sb");
+  if (!nav) return;
+  if (!navReady) {
+    nav.innerHTML = sidebar(active);
+    navReady = true;
     return;
   }
-  const route = routeOf();
-  const active = route.kind === "host" ? "hosts" : route.kind;
+  const href = `#/${active}`;
+  nav.querySelectorAll("a").forEach((link) => {
+    link.classList.toggle("on", link.getAttribute("href") === href);
+  });
+  const alerts = nav.querySelector('a[href="#/alerts"]');
+  if (!alerts) return;
+  const open = !!(
+    state.alerts &&
+    state.alerts.open &&
+    state.alerts.open.length
+  );
+  const dot = alerts.querySelector(":scope > .dot");
+  if (open && !dot)
+    alerts.insertAdjacentHTML("beforeend", `<span class="dot"></span>`);
+  else if (!open && dot) dot.remove();
+}
+function markRange() {
+  document.querySelectorAll("main [data-range]").forEach((btn) => {
+    const on = btn.dataset.range === state.range;
+    btn.classList.toggle("on", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+function contentFor(route) {
+  if (state.error) {
+    return (
+      topbar({ title: titleFor(route) }) +
+      `<div class="card empty">${esc(state.error)}<br><a href="#/overview" style="color:var(--teal)">Back to overview</a></div>`
+    );
+  }
   const ready =
     state.view &&
-    !state.error &&
+    !state.loading &&
     state.view.range === state.range &&
     state.view.id === route.id &&
     (state.view.kind === route.kind || shared(state.view.kind, route.kind));
-  let html;
-  if (state.error) {
-    html =
+  if (!ready) {
+    return (
       topbar({ title: titleFor(route) }) +
-      `<div class="card empty">${esc(state.error)}<br><a href="#/overview" style="color:var(--teal)">Back to overview</a></div>`;
-  } else if (!ready) {
-    html =
-      topbar({ title: titleFor(route) }) +
-      `<div class="card empty">Loading…</div>`;
-  } else html = pageHtml(route, state.view.body);
-  app.innerHTML = `<nav class="sb">${sidebar(active)}</nav><main>${html}</main>`;
+      `<div class="card empty">Loading…</div>`
+    );
+  }
+  return pageHtml(route, state.view.body);
+}
+function render(opts = {}) {
+  hideTip();
+  const app = document.getElementById("app");
+  if (state.login) {
+    disconnectCharts();
+    chartReg = [];
+    navReady = false;
+    painted = "";
+    app.innerHTML = loginHtml();
+    return;
+  }
+  const { main } = ensureShell();
+  const route = routeOf();
+  syncNav(navKey(route));
+  if (opts.stale) {
+    markRange();
+    main.classList.add("pending");
+    main.setAttribute("aria-busy", "true");
+    return;
+  }
+  const prevCharts = chartReg;
+  chartReg = [];
+  const html = contentFor(route);
+  const busy = state.dimmed || state.loading;
+  if (html === painted) {
+    chartReg = prevCharts;
+    main.classList.toggle("pending", !!state.dimmed);
+    if (busy) main.setAttribute("aria-busy", "true");
+    else main.removeAttribute("aria-busy");
+    return;
+  }
+  const y = opts.preserveScroll ? window.scrollY : null;
+  disconnectCharts();
+  painted = html;
+  main.innerHTML = html;
+  main.classList.toggle("pending", !!state.dimmed);
+  if (busy) main.setAttribute("aria-busy", "true");
+  else main.removeAttribute("aria-busy");
+  if (y != null) window.scrollTo(0, y);
   bindChartResize();
+}
+function refreshCurrent() {
+  if (
+    refreshFlight ||
+    document.hidden ||
+    state.login ||
+    state.dimmed ||
+    state.loading ||
+    !state.view
+  )
+    return;
+  const route = routeOf();
+  const range = state.range;
+  const stamp = token;
+  const urls = [];
+  if (route.url) urls.push(route.url);
+  if (route.kind !== "alerts") urls.push("/api/alerts");
+  refreshFlight = Promise.all(
+    urls.map((url) =>
+      cache.revalidate(url).then(
+        (data) => ({ url, data }),
+        (err) => ({ url, err }),
+      ),
+    ),
+  )
+    .then((results) => {
+      if (state.login) {
+        state.dimmed = false;
+        state.loading = false;
+        render();
+        return;
+      }
+      if (stamp !== token || state.dimmed || state.loading) return;
+      if (state.range !== range) return;
+      const now = routeOf();
+      if (now.kind !== route.kind || now.id !== route.id) return;
+      let body = state.view ? state.view.body : null;
+      let bodyChanged = false;
+      let alertsChanged = false;
+      for (const result of results) {
+        if (result.err) continue;
+        if (result.data && result.data.mode) state.mode = result.data.mode;
+        if (result.url === "/api/alerts") {
+          if (!sameData(state.alerts, result.data)) {
+            state.alerts = result.data;
+            alertsChanged = true;
+          }
+          if (route.kind === "alerts" && !sameData(body, result.data)) {
+            body = result.data;
+            bodyChanged = true;
+          }
+        } else if (!sameData(body, result.data)) {
+          body = result.data;
+          bodyChanged = true;
+        }
+      }
+      lastFetched = Date.now();
+      if (bodyChanged) {
+        state.error = "";
+        state.view = { kind: route.kind, range, id: route.id, body };
+        render({ preserveScroll: true });
+      } else if (alertsChanged) syncNav(navKey(route));
+    })
+    .finally(() => {
+      refreshFlight = null;
+    });
 }
 
 document.addEventListener("click", (e) => {
   const range = e.target.closest("[data-range]");
   if (range) {
+    if (range.dataset.range === state.range) return;
     state.range = range.dataset.range;
     lsSet("nd-range", state.range);
-    show();
+    show("range");
     return;
   }
   const toggle = e.target.closest("[data-act='toggleAll']");
@@ -1044,8 +1305,13 @@ document.addEventListener("click", (e) => {
   }
   const refresh = e.target.closest("[data-act='refresh']");
   if (refresh) {
-    cache.clear();
-    show(true);
+    prefetch.cancel();
+    if (state.view && !state.error) {
+      refreshCurrent();
+    } else {
+      cache.clear();
+      show("nav");
+    }
     return;
   }
   const logout = e.target.closest("[data-act='logout']");
@@ -1059,8 +1325,11 @@ document.addEventListener("click", (e) => {
       .catch(() => {})
       .finally(() => {
         cache.clear();
+        prefetch.cancel();
         state.view = null;
         state.alerts = null;
+        state.dimmed = false;
+        state.loading = false;
         state.login = true;
         render();
       });
@@ -1083,8 +1352,13 @@ document.addEventListener("submit", async (e) => {
     if (!response.ok) throw new Error("failed");
     state.login = false;
     state.loginError = "";
+    state.view = null;
+    state.alerts = null;
+    state.dimmed = false;
+    state.loading = false;
     cache.clear();
-    show();
+    prefetch.cancel();
+    show("nav");
   } catch (err) {
     state.loginError =
       "Sign-in failed. Check your details, or wait a minute before trying again.";
@@ -1093,21 +1367,15 @@ document.addEventListener("submit", async (e) => {
 });
 addEventListener("hashchange", () => {
   scrollTo(0, 0);
-  show();
+  show("nav");
 });
 if (typeof ResizeObserver !== "function")
   addEventListener("resize", () => scheduleChartDraw());
 watchResolution();
-setInterval(() => {
-  if (!document.hidden && !state.login) {
-    cache.clear();
-    show(true);
-  }
-}, 60000);
+setInterval(refreshCurrent, 60000);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && !state.login && Date.now() - lastFetched >= 15000) {
-    cache.clear();
-    show(true);
+    refreshCurrent();
   }
 });
-show();
+show("nav");

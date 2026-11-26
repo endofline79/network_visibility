@@ -78,7 +78,7 @@ for svc in "${SERVICES[@]}"; do
   case "$svc" in
     console)
       WANT_CONSOLE=1
-      tag_rollback "visibility-console:0.5.1"
+      tag_rollback "visibility-console:0.5.2"
       ;;
     telemetry)
       CORE_SERVICES+=("telemetry")
@@ -109,8 +109,8 @@ if [ "${#CORE_SERVICES[@]}" -gt 0 ]; then
 fi
 
 if [ "$WANT_CONSOLE" -eq 1 ]; then
-  echo "=== Building visibility-console:0.5.1 ==="
-  docker build -t visibility-console:0.5.1 ./presentation
+  echo "=== Building visibility-console:0.5.2 ==="
+  docker build -t visibility-console:0.5.2 ./presentation
 fi
 
 if [ "${#CORE_SERVICES[@]}" -gt 0 ]; then
