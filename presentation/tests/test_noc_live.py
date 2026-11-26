@@ -89,10 +89,10 @@ class NocLiveTests(unittest.TestCase):
                 {"src": "192.168.5.230", "blocks": "3"},
             ],
             "flow_pairs": [
-                {"src_addr": "192.168.5.230", "dst_addr": "1.1.1.1", "last_seen": t_recent},
+                {"src_addr": "192.168.5.230", "dst_addr": "1.1.1.1", "dst_port": "443", "proto": "TCP", "last_seen": t_recent},
             ],
             "block_pairs": [
-                {"src": "8.8.8.8", "dst": "192.168.5.1", "hits": "7", "last_seen": t_recent},
+                {"src": "192.168.5.236", "dst": "8.8.8.8", "dport": "123", "proto": "UDP", "hits": "7", "last_seen": t_recent},
             ],
         }
         payload = build_live(end, results, directory, geo=FakeGeo())
@@ -111,9 +111,19 @@ class NocLiveTests(unittest.TestCase):
         self.assertEqual(hosts_by_id["nas"]["bytes"], 500_000)
 
         self.assertEqual(len(payload["map"]["flows"]), 1)
-        self.assertEqual(payload["map"]["flows"][0]["country_code"], "US")
+        flow_area = payload["map"]["flows"][0]
+        self.assertEqual(flow_area["country_code"], "US")
+        self.assertEqual(flow_area["direction"], "Outbound")
+        self.assertEqual(flow_area["hosts"], ["AI-02"])
+        self.assertEqual(flow_area["ports"], ["TCP:443 (HTTPS)"])
+
         self.assertEqual(len(payload["map"]["blocks"]), 1)
-        self.assertEqual(payload["map"]["blocks"][0]["country_code"], "NL")
+        block_area = payload["map"]["blocks"][0]
+        self.assertEqual(block_area["country_code"], "NL")
+        self.assertEqual(block_area["direction"], "Outbound")
+        self.assertEqual(block_area["hosts"], ["Synology"])
+        self.assertEqual(block_area["ports"], ["UDP:123 (NTP)"])
+        self.assertEqual(block_area["hits"], 7)
 
     def test_live_route_returns_503_on_failure_without_demo_fallback(self):
         with patch("backend.app.MODE", "live"), patch("backend.noc_live.live_noc", side_effect=RuntimeError("down")):

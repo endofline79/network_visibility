@@ -6,12 +6,13 @@ DB-IP Lite geolocation (0.5-degree grid). Demo mode is strictly illustrative
 and never used as a fallback in live mode.
 """
 
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 import ipaddress
 import math
 
 from .filterlog import public_endpoint
-from .locations import aggregate
+from .locations import GRID_DEGREES, aggregate, identity, valid_coordinate
 from .network import (
     _fresh,
     _is_lan,
@@ -46,6 +47,37 @@ MAP_NOTE = (
     "DB-IP Lite 0.5° grid and represent approximate areas, not exact servers or packet routes."
 )
 
+_PORT_LABELS = {
+    ("TCP", "22"): "SSH",
+    ("TCP", "53"): "DNS",
+    ("UDP", "53"): "DNS",
+    ("TCP", "80"): "HTTP",
+    ("UDP", "123"): "NTP",
+    ("TCP", "443"): "HTTPS",
+    ("UDP", "443"): "QUIC",
+    ("TCP", "465"): "SMTPS",
+    ("TCP", "587"): "SMTP",
+    ("TCP", "853"): "DoT",
+    ("TCP", "993"): "IMAPS",
+    ("UDP", "3478"): "STUN",
+    ("TCP", "5223"): "Apple Push",
+    ("TCP", "5228"): "Google Push",
+    ("UDP", "41641"): "Tailscale",
+    ("UDP", "51820"): "WireGuard",
+}
+
+
+def _format_port(proto, port):
+    p = str(proto or "").strip().upper()
+    d = str(port or "").strip()
+    if p == "ICMP" or p == "ICMPV6":
+        return p
+    if not d or d == "0":
+        return p or ""
+    label = f"{p}:{d}" if p else d
+    svc = _PORT_LABELS.get((p, d))
+    return f"{label} ({svc})" if svc else label
+
 
 def live_queries(start, end, flow_map_start):
     span_15m = _span(start, end)
@@ -77,11 +109,11 @@ def live_queries(start, end, flow_map_start):
             "| stats by (src) count() blocks | sort by (blocks) desc | limit 200"
         ),
         "flow_pairs": (
-            f"{flow_5m} | stats by (src_addr, dst_addr) max(_time) last_seen | limit {PAIR_LIMIT + 1}"
+            f"{flow_5m} | stats by (src_addr, dst_addr, dst_port, proto) max(_time) last_seen | limit {PAIR_LIMIT + 1}"
         ),
         "block_pairs": (
             f"{span_15m} app_name:=filterlog action:=block "
-            f"| stats by (src, dst) count() hits, max(_time) last_seen | sort by (hits) desc | limit {PAIR_LIMIT + 1}"
+            f"| stats by (src, dst, dport, proto) count() hits, max(_time) last_seen | sort by (hits) desc | limit {PAIR_LIMIT + 1}"
         ),
     }
 
@@ -95,18 +127,36 @@ def _safe_ip(value):
         return None
 
 
-def _geolocate_endpoints(ips_with_seen, geo):
-    endpoints = {}
-    for ip, seen in ips_with_seen.items():
-        loc = geo.lookup(ip) if geo is not None else None
-        endpoints[ip] = (loc, stamp(seen) if isinstance(seen, datetime) else seen)
-    return aggregate(endpoints, near_live=True)
+def _area_id_for(loc):
+    loc = loc or {}
+    code = loc.get("code") or "??"
+    region = loc.get("region") or None
+    city = loc.get("city") or None
+    lat, lon = loc.get("latitude"), loc.get("longitude")
+    if code != "??" and (region or city) and valid_coordinate(lat, 90) and valid_coordinate(lon, 180):
+        y = min(359, math.floor((lat + 90) / GRID_DEGREES))
+        x = min(719, math.floor((lon + 180) / GRID_DEGREES))
+        return identity((code, region, x, y))
+    return None
 
 
-def _extract_public_ips(rows, fields, start, end):
+def _direction_label(dirs):
+    has_in = "in" in dirs
+    has_out = "out" in dirs
+    if has_in and has_out:
+        return "Inbound & Outbound"
+    if has_out:
+        return "Outbound"
+    if has_in:
+        return "Inbound"
+    return ""
+
+
+def _extract_public_meta(rows, src_field, dst_field, port_field, start, end, directory):
     if rows is None or len(rows) > PAIR_LIMIT:
-        return None, 0
+        return None, {}, 0
     ips = {}
+    meta = {}
     events = 0
     for row in rows:
         if not isinstance(row, dict):
@@ -119,13 +169,69 @@ def _extract_public_ips(rows, fields, start, end):
         except (ValueError, TypeError):
             hits = 1
         events += hits
-        for field in fields:
-            ip = _safe_ip(row.get(field))
-            if ip and public_endpoint(ip, NETWORKS):
-                prev = ips.get(ip)
-                if prev is None or when > prev:
-                    ips[ip] = when
-    return ips, events
+        src = _safe_ip(row.get(src_field))
+        dst = _safe_ip(row.get(dst_field))
+        src_pub = bool(src and public_endpoint(src, NETWORKS))
+        dst_pub = bool(dst and public_endpoint(dst, NETWORKS))
+        port_label = _format_port(row.get("proto"), row.get(port_field))
+
+        pairs = []
+        if dst_pub:
+            lan_peer = src if (src and _is_lan(src)) else None
+            pairs.append((dst, "out", lan_peer))
+        if src_pub:
+            lan_peer = dst if (dst and _is_lan(dst)) else None
+            pairs.append((src, "in", lan_peer))
+
+        for pub_ip, direction, lan_peer in pairs:
+            prev = ips.get(pub_ip)
+            if prev is None or when > prev:
+                ips[pub_ip] = when
+            entry = meta.setdefault(
+                pub_ip, {"hosts": Counter(), "ports": Counter(), "dirs": set(), "hits": 0}
+            )
+            entry["dirs"].add(direction)
+            entry["hits"] += hits
+            if port_label:
+                entry["ports"][port_label] += hits
+            if lan_peer:
+                rec = directory.known(lan_peer)
+                hname = rec["name"] if rec else lan_peer
+                entry["hosts"][hname] += hits
+    return ips, meta, events
+
+
+def _geolocate_with_meta(ips_with_seen, ip_meta, geo):
+    endpoints = {}
+    area_meta = {}
+    for ip, seen in ips_with_seen.items():
+        loc = geo.lookup(ip) if geo is not None else None
+        endpoints[ip] = (loc, stamp(seen) if isinstance(seen, datetime) else seen)
+        aid = _area_id_for(loc)
+        if aid is not None:
+            m = ip_meta.get(ip) or {}
+            bucket = area_meta.setdefault(
+                aid, {"hosts": Counter(), "ports": Counter(), "dirs": set(), "hits": 0}
+            )
+            bucket["hosts"].update(m.get("hosts") or ())
+            bucket["ports"].update(m.get("ports") or ())
+            bucket["dirs"].update(m.get("dirs") or ())
+            bucket["hits"] += m.get("hits") or 0
+
+    countries, locations = aggregate(endpoints, near_live=True)
+    enriched = []
+    for loc in locations:
+        if loc.get("precision") != "area":
+            continue
+        info = area_meta.get(loc["id"]) or {}
+        hosts = [name for name, _ in (info.get("hosts") or Counter()).most_common(3)]
+        ports = [port for port, _ in (info.get("ports") or Counter()).most_common(3)]
+        loc["direction"] = _direction_label(info.get("dirs") or set())
+        loc["hosts"] = hosts
+        loc["ports"] = ports
+        loc["hits"] = int(info.get("hits") or loc.get("count") or 0)
+        enriched.append(loc)
+    return countries, enriched
 
 
 def build_live(end, results, directory, geo=None):
@@ -160,7 +266,6 @@ def build_live(end, results, directory, geo=None):
         total_blocks += blk_val
         throughput_points.append({"time": stamp(bucket), "bytes": b_val, "blocks": blk_val})
 
-    # Per-host bucketed traffic (merged via Directory for multi-IP hosts).
     host_upload = {}
     host_download = {}
     host_sparks = {}
@@ -247,11 +352,19 @@ def build_live(end, results, directory, geo=None):
     hosts.sort(key=lambda item: (item["status"] != "active", -item["bytes"], -item["blocked"], item["name"].lower()))
     listed_hosts = hosts[:HOST_LIMIT]
 
-    flow_ips, _ = _extract_public_ips(results.get("flow_pairs"), ("src_addr", "dst_addr"), flow_map_start, end)
-    block_ips, block_pair_events = _extract_public_ips(results.get("block_pairs"), ("src", "dst"), start, end)
+    flow_ips, flow_meta, _ = _extract_public_meta(
+        results.get("flow_pairs"), "src_addr", "dst_addr", "dst_port", flow_map_start, end, directory
+    )
+    block_ips, block_meta, block_pair_events = _extract_public_meta(
+        results.get("block_pairs"), "src", "dst", "dport", start, end, directory
+    )
 
-    flow_countries, flow_locations = _geolocate_endpoints(flow_ips or {}, geo) if flow_ips is not None else ([], [])
-    block_countries, block_locations = _geolocate_endpoints(block_ips or {}, geo) if block_ips is not None else ([], [])
+    flow_countries, flow_locations = (
+        _geolocate_with_meta(flow_ips, flow_meta, geo) if flow_ips is not None else ([], [])
+    )
+    block_countries, block_locations = (
+        _geolocate_with_meta(block_ips, block_meta, geo) if block_ips is not None else ([], [])
+    )
 
     peak_bytes = max((p["bytes"] for p in throughput_points), default=0)
     avg_mbps = round((total_bytes * 8) / LIVE_WINDOW_SECONDS / 1e6, 2) if LIVE_WINDOW_SECONDS else 0.0
@@ -285,8 +398,8 @@ def build_live(end, results, directory, geo=None):
         },
         "map": {
             "home": HOME,
-            "flows": [loc for loc in flow_locations if loc.get("precision") == "area"],
-            "blocks": [loc for loc in block_locations if loc.get("precision") == "area"],
+            "flows": flow_locations,
+            "blocks": block_locations,
             "flow_countries": flow_countries,
             "block_countries": block_countries,
             "geo": geo.status() if geo is not None else {"available": False},
@@ -328,9 +441,7 @@ def demo_live(end):
     starts = bucket_starts(start, end, STEP_SECONDS)
     n = len(starts)
 
-    # Illustrative host rows aligned with existing household demo inventory.
     demo_specs = [
-        # id, active, mb_scale_per_min, blocked_count, spike_idx
         ("ai-02", True, 28_000_000, 0, 12),
         ("deneb", True, 16_500_000, 0, 9),
         ("apple-tv", True, 14_200_000, 0, None),
@@ -381,34 +492,46 @@ def demo_live(end):
     peak_bytes = max(agg_bytes) if agg_bytes else 0
 
     flow_places = [
-        ("US", "United States", "Virginia", "Ashburn", 39.04, -77.49, 28),
-        ("US", "United States", "California", "San Jose", 37.34, -121.89, 19),
-        ("US", "United States", "Washington", "Seattle", 47.61, -122.33, 12),
-        ("CA", "Canada", "Ontario", "Toronto", 43.65, -79.38, 9),
-        ("GB", "United Kingdom", "England", "London", 51.51, -0.13, 14),
-        ("DE", "Germany", "Hesse", "Frankfurt", 50.11, 8.68, 11),
-        ("JP", "Japan", "Tokyo", "Tokyo", 35.68, 139.69, 8),
-        ("AU", "Australia", "New South Wales", "Sydney", -33.87, 151.21, 5),
+        ("US", "United States", "Virginia", "Ashburn", 39.04, -77.49, 28, "Outbound", ["AI-02", "deneb"], ["TCP:443 (HTTPS)"]),
+        ("US", "United States", "California", "San Jose", 37.34, -121.89, 19, "Outbound", ["deneb", "Living-Room Apple TV"], ["TCP:443 (HTTPS)", "UDP:443 (QUIC)"]),
+        ("US", "United States", "Washington", "Seattle", 47.61, -122.33, 12, "Outbound", ["Ring front door", "deneb"], ["TCP:443 (HTTPS)"]),
+        ("CA", "Canada", "Ontario", "Toronto", 43.65, -79.38, 9, "Outbound", ["Living-Room Apple TV", "RokuPremiere"], ["TCP:443 (HTTPS)"]),
+        ("GB", "United Kingdom", "England", "London", 51.51, -0.13, 14, "Outbound", ["deneb", "AI-02"], ["TCP:443 (HTTPS)"]),
+        ("DE", "Germany", "Hesse", "Frankfurt", 50.11, 8.68, 11, "Outbound", ["AI-02"], ["TCP:443 (HTTPS)"]),
+        ("JP", "Japan", "Tokyo", "Tokyo", 35.68, 139.69, 8, "Outbound", ["deneb"], ["TCP:443 (HTTPS)"]),
+        ("AU", "Australia", "New South Wales", "Sydney", -33.87, 151.21, 5, "Outbound", ["Synology"], ["TCP:443 (HTTPS)"]),
     ]
     block_places = [
-        ("NL", "Netherlands", "North Holland", "Amsterdam", 52.37, 4.90, 11),
-        ("CN", "China", "Guangdong", "Shenzhen", 22.54, 114.06, 9),
-        ("BR", "Brazil", "São Paulo", "São Paulo", -23.55, -46.63, 6),
-        ("SG", "Singapore", "Central", "Singapore", 1.35, 103.82, 7),
-        ("MX", "Mexico", "Mexico City", "Mexico City", 19.43, -99.13, 4),
-        ("AE", "United Arab Emirates", "Dubai", "Dubai", 25.20, 55.27, 5),
+        ("NL", "Netherlands", "North Holland", "Amsterdam", 52.37, 4.90, 11, "Inbound", [], ["TCP:22 (SSH)", "TCP:443 (HTTPS)"]),
+        ("CN", "China", "Guangdong", "Shenzhen", 22.54, 114.06, 9, "Inbound", [], ["TCP:23", "TCP:80 (HTTP)"]),
+        ("BR", "Brazil", "São Paulo", "São Paulo", -23.55, -46.63, 6, "Outbound", ["unifi-os"], ["UDP:123 (NTP)"]),
+        ("SG", "Singapore", "Central", "Singapore", 1.35, 103.82, 7, "Inbound", [], ["TCP:445", "TCP:22 (SSH)"]),
+        ("MX", "Mexico", "Mexico City", "Mexico City", 19.43, -99.13, 4, "Outbound", ["Samsung Bedroom TV"], ["TCP:443 (HTTPS)"]),
+        ("AE", "United Arab Emirates", "Dubai", "Dubai", 25.20, 55.27, 5, "Inbound", [], ["TCP:8080"]),
     ]
 
     def _agg_demo(places, tag):
-        endpoints = {
-            f"demo:{tag}:{code}:{city}:{i}": (
-                {"code": code, "name": cname, "region": region, "city": city, "latitude": lat, "longitude": lon},
-                stamp(end - timedelta(seconds=20 + i * 3)),
-            )
-            for code, cname, region, city, lat, lon, cnt in places
-            for i in range(cnt)
-        }
-        return aggregate(endpoints, near_live=True)
+        endpoints = {}
+        by_area = {}
+        for code, cname, region, city, lat, lon, cnt, direction, hlist, plist in places:
+            loc_dict = {"code": code, "name": cname, "region": region, "city": city, "latitude": lat, "longitude": lon}
+            aid = _area_id_for(loc_dict)
+            if aid:
+                by_area[aid] = {"direction": direction, "hosts": hlist, "ports": plist, "hits": cnt * 3}
+            for i in range(cnt):
+                endpoints[f"demo:{tag}:{code}:{city}:{i}"] = (
+                    loc_dict,
+                    stamp(end - timedelta(seconds=20 + i * 3)),
+                )
+        countries, locs = aggregate(endpoints, near_live=True)
+        out = []
+        for loc in locs:
+            if loc.get("precision") != "area":
+                continue
+            extra = by_area.get(loc["id"]) or {}
+            loc.update(extra)
+            out.append(loc)
+        return countries, out
 
     flow_countries, flow_locs = _agg_demo(flow_places, "flow")
     block_countries, block_locs = _agg_demo(block_places, "block")
@@ -451,8 +574,8 @@ def demo_live(end):
         },
         "map": {
             "home": HOME,
-            "flows": [loc for loc in flow_locs if loc.get("precision") == "area"],
-            "blocks": [loc for loc in block_locs if loc.get("precision") == "area"],
+            "flows": flow_locs,
+            "blocks": block_locs,
             "flow_countries": flow_countries,
             "block_countries": block_countries,
             "geo": {"available": True, "provider": "DB-IP Lite (demo locations)", "age_days": 4},

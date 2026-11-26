@@ -1,7 +1,7 @@
 # Loopback synthetic demo. Image tag 0.1.0 matches this file's historical demo
 # contract. AI-02 does not use this file.
 #
-# Live console: deploy/compose.live.yaml (visibility-console:0.6.0, auth
+# Live console: deploy/compose.live.yaml (visibility-console:0.6.1, auth
 # required, /run/visibility mounts). Planner env vars are repeated here so the
 # demo file and the live overlay name the same settings. This demo does not
 # call an LLM. llama-swap serves `visibility-planner` with --parallel 1; the

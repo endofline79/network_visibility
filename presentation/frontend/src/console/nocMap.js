@@ -68,7 +68,7 @@ function arcPath(x0, y0, x1, y1) {
   return `M${x0.toFixed(1)},${y0.toFixed(1)} Q${cx.toFixed(1)},${cy.toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
 }
 
-function locationTip(loc, kindLabel, color) {
+function locationTip(loc, kindLabel, color, isBlock) {
   const cities =
     loc.cities && loc.cities.length ? loc.cities.join(", ") : loc.name;
   const area =
@@ -76,9 +76,22 @@ function locationTip(loc, kindLabel, color) {
       ? `${cities}, ${loc.country_name}`
       : loc.country_name || loc.name || "Approximate area";
   const plural = loc.count === 1 ? "endpoint" : "endpoints";
+  const dir = loc.direction ? ` · ${esc(loc.direction)}` : "";
+  const hits =
+    isBlock && loc.hits && loc.hits > loc.count ? ` · ${loc.hits} drops` : "";
+  const hosts =
+    loc.hosts && loc.hosts.length
+      ? `<div style="margin-top:3px;color:#cbd5e1">Hosts: <b>${esc(loc.hosts.join(", "))}</b></div>`
+      : "";
+  const ports =
+    loc.ports && loc.ports.length
+      ? `<div style="color:#94a3b8">Ports: ${esc(loc.ports.join(", "))}</div>`
+      : "";
   return (
     `<div class="tl">${esc(area)}</div>` +
-    `<i style="background:${color}"></i><b>${loc.count}</b> ${kindLabel} ${plural}` +
+    `<i style="background:${color}"></i><b>${loc.count}</b> ${kindLabel} ${plural}${hits}${dir}` +
+    hosts +
+    ports +
     `<div style="margin-top:4px;color:#8b96a8;font-size:11px">Approximate 0.5° DB-IP area</div>`
   );
 }
@@ -97,7 +110,15 @@ export function drawNocMap(el, mapData, opts = {}) {
   const showFlows = opts.showFlows !== false;
   const showBlocks = opts.showBlocks !== false;
 
-  const sig = `${width}x${height}:${showFlows ? 1 : 0}:${showBlocks ? 1 : 0}:${(mapData.flows || []).length}:${(mapData.blocks || []).length}`;
+  const dataKey = (list) =>
+    (list || [])
+      .slice(0, 12)
+      .map(
+        (l) =>
+          `${l.id}:${l.count}:${l.hits || 0}:${(l.hosts || []).join(",")}:${(l.ports || []).join(",")}`,
+      )
+      .join("|");
+  const sig = `${width}x${height}:${showFlows ? 1 : 0}:${showBlocks ? 1 : 0}:${(mapData.flows || []).length}:${(mapData.blocks || []).length}:${dataKey(mapData.flows)}:${dataKey(mapData.blocks)}`;
   if (el.dataset.mapSig === sig && el.querySelector("svg")) return;
 
   const padX = Math.round(width * 0.01);
@@ -207,7 +228,7 @@ export function drawNocMap(el, mapData, opts = {}) {
       const sw = (1.1 + weight * 1.6).toFixed(2);
       const haloR = (6 + weight * 9).toFixed(1);
       const dotR = (2.1 + weight * 1.9).toFixed(1);
-      const tip = tipAttr(locationTip(loc, label, stroke));
+      const tip = tipAttr(locationTip(loc, label, stroke, !isFlow));
       arcs +=
         `<path class="noc-arc-glow" d="${d}" fill="none" stroke="${glowStroke}" stroke-width="${(Number(sw) * 2.5).toFixed(2)}" opacity="0.24" filter="${filter}"/>` +
         `<path class="noc-arc" d="${d}" fill="none" stroke="${stroke}" stroke-width="${sw}" opacity="${(0.55 + weight * 0.4).toFixed(2)}" stroke-linecap="round" ${tip}/>`;
